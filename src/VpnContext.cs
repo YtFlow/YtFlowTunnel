@@ -9,7 +9,7 @@ namespace YtFlowTunnel
     internal class VpnContext
     {
         private DatagramSocket s;
-        private TunInterface tun;
+        private TunInterface tun = new TunInterface();
         public void Init(string port)
         {
             s = new DatagramSocket();
