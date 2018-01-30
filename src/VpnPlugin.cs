@@ -10,11 +10,8 @@ namespace YtFlowTunnel
 {
     sealed class VpnPlugin : IVpnPlugIn
     {
-        private BackgroundTaskDeferral _def = null;
-        public VpnPlugin(BackgroundTaskDeferral def)
-        {
-            this._def = def;
-        }
+        public BackgroundTaskDeferral def = null;
+        public VpnPluginState State = VpnPluginState.Disconnected;
         private void LogLine(string text, VpnChannel channel)
         {
             //Debug.WriteLine(text);
@@ -22,7 +19,7 @@ namespace YtFlowTunnel
         }
         public void Connect(VpnChannel channel)
         {
-
+            State = VpnPluginState.Connecting;
             LogLine("Connecting", channel);
             try
             {
@@ -95,21 +92,24 @@ namespace YtFlowTunnel
                 var delta = DateTime.Now - now;
                 LogLine($"Finished starting transport in {delta.TotalMilliseconds} ms.", channel);
                 LogLine("Connected", channel);
+                State = VpnPluginState.Connected;
             }
             catch (Exception ex)
             {
                 LogLine("Error connecting", channel);
                 LogLine(ex.Message, channel);
+                State = VpnPluginState.Disconnected;
             }
+            def?.Complete();
         }
 
         public void Disconnect(VpnChannel channel)
         {
-
-            this._def.Complete();
+            State = VpnPluginState.Disconnecting;
             if (channel.PlugInContext == null)
             {
                 LogLine("Disconnecting with null context", channel);
+                State = VpnPluginState.Disconnected;
                 return;
             }
             else
@@ -121,6 +121,8 @@ namespace YtFlowTunnel
             LogLine("channel stopped", channel);
             channel.PlugInContext = null;
             LogLine("Disconnected", channel);
+            State = VpnPluginState.Disconnected;
+            def?.Complete();
         }
 
         public void GetKeepAlivePayload(VpnChannel channel, out VpnPacketBuffer keepAlivePacket)

@@ -4,27 +4,26 @@ using Windows.Networking.Vpn;
 
 namespace YtFlowTunnel
 {
-    public sealed class VpnTask: IBackgroundTask
+    public sealed class VpnTask : IBackgroundTask
     {
         private static IVpnPlugIn _pluginInstance = null;
         private static object _pluginLocker = new object();
-        public static IVpnPlugIn GetPlugin(BackgroundTaskDeferral def)
+        public static IVpnPlugIn GetPlugin()
         {
             if (_pluginInstance == null)
             {
                 lock (_pluginLocker)
                 {
                     if (_pluginInstance != null) return _pluginInstance;
-                    _pluginInstance = new VpnPlugin(def);
+                    _pluginInstance = new VpnPlugin();
                 }
             }
             return _pluginInstance;
         }
         public void Run(IBackgroundTaskInstance taskInstance)
         {
-            Debug.WriteLine("Running");
-            var def = taskInstance.GetDeferral();
-            VpnChannel.ProcessEventAsync(GetPlugin(def), taskInstance.TriggerDetails);
+            var plugin = GetPlugin() as VpnPlugin;
+            VpnChannel.ProcessEventAsync(GetPlugin(), taskInstance.TriggerDetails);
         }
     }
 }
