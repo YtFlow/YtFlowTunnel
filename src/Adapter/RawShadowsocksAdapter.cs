@@ -39,7 +39,15 @@ namespace YtFlowTunnel
 
         async public void Init()
         {
-            await r.ConnectAsync(server, port);
+            try
+            {
+                await r.ConnectAsync(server, port);
+            }
+            catch (Exception)
+            {
+                Debug.WriteLine("Error connecting to remote");
+                return;
+            }
             Debug.WriteLine("Connected");
 
             var header = new byte[7];
@@ -55,7 +63,7 @@ namespace YtFlowTunnel
             remoteConnected = true;
             SendToRemote(header);
 
-            byte[] remotebuf = new byte[512];
+            byte[] remotebuf = new byte[2048];
             while (r.Connected)
             {
                 while (sendBuffers.Count > 1)
@@ -96,11 +104,11 @@ namespace YtFlowTunnel
             remoteConnected = false;
             try
             {
-                r.Shutdown(SocketShutdown.Both);
+                if (r.Connected) r.Shutdown(SocketShutdown.Both);
                 r.Dispose();
                 Debug.WriteLine("remote socket disposed");
             }
-            catch (ObjectDisposedException)
+            catch (Exception)
             {
                 Debug.WriteLine("remote socket already disposed");
             }
@@ -110,7 +118,16 @@ namespace YtFlowTunnel
         {
             if (remoteConnected)
             {
-                r.Send(e);
+                try
+                {
+                    r.Send(e);
+                }
+                catch (Exception)
+                {
+                    Debug.WriteLine("Cannot send to remote");
+                    Dispose();
+                    return;
+                }
                 LogData("Sent to remote ", e);
                 // Send header first, followed by local buffer
                 if (localbuf != null)

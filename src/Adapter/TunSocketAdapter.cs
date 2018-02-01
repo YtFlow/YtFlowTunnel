@@ -23,7 +23,7 @@ namespace YtFlowTunnel
 
         public static void LogData(string prefix, byte[] data)
         {
-            var sb = new StringBuilder(data.Length * 6 + prefix.Length);
+            /*var sb = new StringBuilder(data.Length * 6 + prefix.Length);
             sb.Append(prefix);
             sb.Append(Encoding.ASCII.GetString(data));
             sb.Append(" ");
@@ -32,7 +32,7 @@ namespace YtFlowTunnel
                 sb.AppendFormat("\\x{0:x2} ", by);
             }
 
-            Debug.WriteLine(sb.ToString());
+            Debug.WriteLine(sb.ToString());*/
         }
 
         internal TunSocketAdapter(TcpSocket socket, TunInterface tun)
@@ -86,8 +86,16 @@ namespace YtFlowTunnel
 
         protected virtual void Socket_DataReceived(TcpSocket sender, byte[] bytes)
         {
-            ReadData(this, bytes);
-            checkSendBuffers();
+            if (bytes == null)
+            {
+                // Local FIN recved
+                Close();
+            }
+            else
+            {
+                ReadData(this, bytes);
+                checkSendBuffers();
+            }
         }
 
         public virtual void Close()
