@@ -12,6 +12,7 @@ using Windows.Security.Cryptography.Core;
 using Windows.Storage.Streams;
 using Wintun2socks;
 using System.Net.Sockets;
+using YtFlowTunnel.DNS;
 
 namespace YtFlowTunnel
 {
@@ -50,6 +51,7 @@ namespace YtFlowTunnel
             }
             Debug.WriteLine("Connected");
 
+            /*
             var header = new byte[7];
             header[0] = 0x01;
             header[1] = (byte)(_socket.RemoteAddr & 0xFF);
@@ -58,6 +60,14 @@ namespace YtFlowTunnel
             header[4] = (byte)(_socket.RemoteAddr >> 24);
             header[5] = (byte)(_socket.RemotePort >> 8);
             header[6] = (byte)(_socket.RemotePort & 0xFF);
+            */
+            string domain = DnsProxyServer.Lookup((byte)(_socket.RemoteAddr >> 24 & 0xFF));
+            var header = new byte[domain.Length + 4];
+            header[0] = 0x03;
+            header[1] = (byte)domain.Length;
+            Encoding.ASCII.GetBytes(domain).CopyTo(header, 2);
+            header[header.Length - 2] = (byte)(_socket.RemotePort >> 8);
+            header[header.Length - 1] = (byte)(_socket.RemotePort & 0xFF);
 
             // Let header be sent first
             remoteConnected = true;

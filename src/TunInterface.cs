@@ -1,10 +1,12 @@
 ﻿using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Threading;
 using System.Threading.Tasks;
 using Wintun2socks;
+using YtFlowTunnel.DNS;
 
 namespace YtFlowTunnel
 {
@@ -13,10 +15,9 @@ namespace YtFlowTunnel
     {
         ConcurrentQueue<Action> dispatchQ = new ConcurrentQueue<Action>();
         Task dispatchWorker;
-        Task worker;
         EventWaitHandle dispatchWaitHandle = new EventWaitHandle(false, EventResetMode.ManualReset);
-        EventWaitHandle timeoutWaitHandle = new EventWaitHandle(false, EventResetMode.AutoReset);
         Wintun w = Wintun.Instance;
+        DnsProxyServer dnsServer = new DnsProxyServer();
         Action<string> Write;
         Action<string> WriteLine;
 
@@ -41,14 +42,10 @@ namespace YtFlowTunnel
                     Debug.WriteLine($"{dispatchQ.Count} tasks remain");
                     while (dispatchQ.TryDequeue(out Action act))
                     {
-                        timeoutWaitHandle.Reset();
-                        worker = Task.Run(() =>
+                        //Task.Run(() =>
                         {
                             act();
-                            timeoutWaitHandle.Set();
-                        });
-                        timeoutWaitHandle.Reset();
-                        timeoutWaitHandle.WaitOne(2000);
+                        }//).Wait(2000);
                     }
                     dispatchWaitHandle.Reset();
                     dispatchWaitHandle.WaitOne();
@@ -56,9 +53,23 @@ namespace YtFlowTunnel
             });
 
             w.PacketPoped += W_PopPacket;
+            w.DnsPacketPoped += W_DnsPacketPoped; ;
             TcpSocket.EstablishedTcp += W_EstablishTcp;
 
             w.Init();
+        }
+
+        async private void W_DnsPacketPoped(object sender, byte[] e, uint addr, ushort port)
+        {
+            try
+            {
+                var res = await dnsServer.QueryAsync(e);
+                executeLwipTask(() => w.PushDnsPayload(addr, port, new List<byte>(res).ToArray()));
+            }
+            catch (Exception)
+            {
+                // DNS timeout?
+            }
         }
 
         private void W_EstablishTcp(TcpSocket socket)

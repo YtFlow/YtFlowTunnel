@@ -23,7 +23,6 @@ namespace YtFlowTunnel
             LogLine("Connecting", channel);
             try
             {
-
                 var transport = new DatagramSocket();
                 channel.AssociateTransport(transport, null);
 
@@ -41,7 +40,7 @@ namespace YtFlowTunnel
                 transport.BindEndpointAsync(new HostName("127.0.0.1"), "9007").AsTask().ContinueWith(t =>
                 {
                     LogLine("Binded", channel);
-                });
+                }).Wait();
 #if !DEBUG
                 context.Init("9008");
 #endif
@@ -63,16 +62,20 @@ namespace YtFlowTunnel
 
                 var inclusionRoutes = routeScope.Ipv4InclusionRoutes;
                 // myip.ipip.net
-                inclusionRoutes.Add(new VpnRoute(new HostName("36.99.18.134"), 32));
+                //inclusionRoutes.Add(new VpnRoute(new HostName("36.99.18.134"), 32));
                 // qzworld.net
-                inclusionRoutes.Add(new VpnRoute(new HostName("188.166.248.242"), 32));
+                //inclusionRoutes.Add(new VpnRoute(new HostName("188.166.248.242"), 32));
+                // DNS server
+                inclusionRoutes.Add(new VpnRoute(new HostName("1.1.1.1"), 32));
+                // main CIDR
+                inclusionRoutes.Add(new VpnRoute(new HostName("172.17.0.0"), 16));
 
                 var assignment = new VpnDomainNameAssignment();
                 var dnsServers = new[]
                 {
                     // DNS servers
-                    new HostName("192.168.1.1"),
-                    new HostName("8.8.8.8")
+                    // new HostName("192.168.1.1"),
+                    new HostName("1.1.1.1")
                 };
                 assignment.DomainNameList.Add(new VpnDomainNameInfo(".", VpnDomainNameType.Suffix, dnsServers, new HostName[] { }));
 
@@ -98,6 +101,7 @@ namespace YtFlowTunnel
             {
                 LogLine("Error connecting", channel);
                 LogLine(ex.Message, channel);
+                LogLine(ex.StackTrace, channel);
                 State = VpnPluginState.Disconnected;
             }
             def?.Complete();
