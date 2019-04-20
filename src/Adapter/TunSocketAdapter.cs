@@ -1,27 +1,28 @@
 ﻿using System;
+using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Runtime.InteropServices.WindowsRuntime;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using Windows.Storage.Streams;
 using Wintun2socks;
-using System.Collections.Concurrent;
-using System.Threading.Tasks;
-using System.Threading;
-using System.Diagnostics;
-using System.Text;
 
-namespace YtFlowTunnel
+namespace YtFlow.Tunnel
 {
-    internal abstract class TunSocketAdapter : IAdapterSocket, IDisposable
+    internal abstract class TunSocketAdapter : IAdapterSocket
     {
         const int MAX_BUFF_SIZE = 2048;
         protected TcpSocket _socket;
         protected TunInterface _tun;
-        protected ConcurrentQueue<IBuffer> sendBuffers = new ConcurrentQueue<IBuffer>();
+        protected BlockingCollection<IBuffer> sendBuffers = new BlockingCollection<IBuffer>(1024);
         private Task sendBufferTask;
-        protected EventWaitHandle checkSendBufferHandle = new EventWaitHandle(false, EventResetMode.ManualReset);
+        private bool sendBufferFinished = false;
         public event ReadDataHandler ReadData;
         public event SocketErrorHandler OnError;
+        public event SocketFinishedHandler OnFinished;
 
-        public static void LogData(string prefix, byte[] data)
+        public static void LogData (string prefix, byte[] data)
         {
             /*var sb = new StringBuilder(data.Length * 6 + prefix.Length);
             sb.Append(prefix);
@@ -35,7 +36,7 @@ namespace YtFlowTunnel
             Debug.WriteLine(sb.ToString());*/
         }
 
-        internal TunSocketAdapter(TcpSocket socket, TunInterface tun)
+        internal TunSocketAdapter (TcpSocket socket, TunInterface tun)
         {
             _socket = socket;
             _tun = tun;
@@ -44,52 +45,62 @@ namespace YtFlowTunnel
             socket.DataSent += Socket_DataSent;
             socket.SocketError += Socket_SocketError;
 
-            sendBufferTask = Task.Run(() =>
+            sendBufferTask = Task.Run(async () =>
             {
-                while (true)
+                while (!sendBufferFinished && !sendBuffers.IsAddingCompleted)
                 {
-                    _tun.executeLwipTask(() =>
+                    IBuffer buf;
+                    try
                     {
-                        while (sendBuffers.TryPeek(out IBuffer buf))
-                        {
-                            if (_socket.Send(buf.ToArray()) == 0)
-                            {
-                                sendBuffers.TryDequeue(out buf);
-                            }
-                            else
-                            {
-                                break;
-                            }
-                        }
-                    });
-                    checkSendBufferHandle.Reset();
-                    checkSendBufferHandle.WaitOne();
+                        buf = await Task.Run(() => sendBuffers.Take());
+                    }
+                    catch (InvalidOperationException)
+                    {
+#if YTLOG_VERBOSE
+                        Debug.WriteLine("No data sent to local");
+#endif
+                        break;
+                    }
+                    var result = await _tun.executeLwipTask(() => _socket.Send(buf.ToArray()));
+                    while (result != 0 && !sendBufferFinished)
+                    {
+                        await Task.Delay(10);
+                        result = await _tun.executeLwipTask(() => _socket.Send(buf.ToArray()));
+                    }
+                    Debug.WriteLine("Data sent to local");
+                    /*if (sendBuffers.Count == 0)
+                    {
+                        await _tun.executeLwipTask(() => _socket.Output());
+                    }*/
                 }
             });
         }
 
-        private void checkSendBuffers()
+        private void checkSendBuffers ()
         {
-            checkSendBufferHandle.Set();
+            // checkSendBufferHandle.Set();
         }
 
-        protected virtual void Socket_SocketError(TcpSocket sender, int err)
+        protected virtual void Socket_SocketError (TcpSocket sender, int err)
         {
-            Close();
-            OnError(this, err);
+            // tcp_pcb has been freed already
+            // No need to close
+            // Close();
+            OnError?.Invoke(this, err);
         }
 
-        protected virtual void Socket_DataSent(TcpSocket sender, ushort length)
+        protected virtual void Socket_DataSent (TcpSocket sender, ushort length)
         {
             checkSendBuffers();
         }
 
-        protected virtual void Socket_DataReceived(TcpSocket sender, byte[] bytes)
+        protected virtual void Socket_DataReceived (TcpSocket sender, byte[] bytes)
         {
             if (bytes == null)
             {
                 // Local FIN recved
-                Close();
+                // Close();
+                OnFinished?.Invoke(this);
             }
             else
             {
@@ -98,31 +109,44 @@ namespace YtFlowTunnel
             }
         }
 
-        public virtual void Close()
+        public virtual void Close ()
         {
-            _tun.executeLwipTask(() => _socket.Close());
+            // _tun.executeLwipTask(() => _socket.Close());
             Debug.WriteLine($"{TcpSocket.ConnectionCount()} connections now");
+            finishSendBuffer();
         }
 
-        public virtual void Reset()
+        public virtual void Reset ()
         {
             _tun.executeLwipTask(() => _socket.Abort());
+            finishSendBuffer();
         }
 
-        public virtual void Write(byte[] bytes)
+        private void finishSendBuffer ()
+        {
+            sendBufferFinished = true;
+            sendBuffers.CompleteAdding();
+            // checkSendBufferHandle.Set();
+        }
+
+        public virtual void Write (IBuffer e)
         {
             //for (int i = 0; i < bytes.Length; i += MAX_BUFF_SIZE)
             //{
             //    sendBuffers.Enqueue(bytes.AsBuffer(i, Math.Min(bytes.Length - i, MAX_BUFF_SIZE)));
             //    checkSendBuffers();
             //}
-            sendBuffers.Enqueue(bytes.AsBuffer());
-            checkSendBuffers();
-        }
 
-        public virtual void Dispose()
-        {
-            Close();
+            try
+            {
+                sendBuffers.TryAdd(e);
+            }
+            catch (Exception)
+            {
+                ;
+            }
+            // checkSendBuffers();
+            // return _tun.executeLwipTask(() => _socket.Send(e.ToArray()));
         }
     }
 }
