@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net.Sockets;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Security.Cryptography;
 using System.Text;
@@ -23,23 +24,21 @@ namespace YtFlow.Tunnel
 {
     internal sealed class RawShadowsocksAdapter : ProxyAdapter
     {
-        private const int RECV_BUFFER_LEN = 8 * 1024;
-        //StreamSocket r = new StreamSocket();
-        //TcpClient r = new TcpClient(AddressFamily.InterNetwork);
+        private const int RECV_BUFFER_LEN = 4096;
         TcpClient r = new TcpClient(AddressFamily.InterNetwork);
         NetworkStream networkStream;
         IInputStream networkReadStream;
         IOutputStream networkWriteStream;
         string server;
         int port;
-        private ConcurrentQueue<byte[]> localbuf = new ConcurrentQueue<byte[]>();// WindowsRuntimeBuffer.Create(4096);
+        private ConcurrentQueue<byte[]> localbuf = new ConcurrentQueue<byte[]>();
         private SemaphoreSlim encLock = new SemaphoreSlim(1, 1);
         private SemaphoreSlim decLock = new SemaphoreSlim(1, 1);
         private Test cryptor = null;
         private IBuffer iv = null;
-
         private bool remoteConnected = false;
 
+        [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.NoOptimization)]
         public static (byte[] Key, byte[] Iv) EVP_BytesToKey (string password, int keyLen, int ivLen)
         {
             var passwordBytes = CryptographicBuffer.ConvertStringToBinary(password, BinaryStringEncoding.Utf8);
@@ -75,7 +74,6 @@ namespace YtFlow.Tunnel
 
         public async Task<IBuffer> Encrypt (byte[] data)
         {
-            // return data.AsBuffer();
             await encLock.WaitAsync();
             try
             {
@@ -89,15 +87,14 @@ namespace YtFlow.Tunnel
             }
         }
 
-        public async Task<IBuffer> Decrypt (byte[] data)
+        public async Task<Memory<byte>> Decrypt (byte[] data)
         {
-            // return data.AsBuffer();
             await decLock.WaitAsync();
             try
             {
                 var outArr = new byte[data.Length];
                 var len = cryptor.Decrypt(data, outArr);
-                return outArr.AsBuffer(0, (int)len);
+                return outArr.AsMemory(0, (int)len);
             }
             finally
             {
@@ -124,11 +121,12 @@ namespace YtFlow.Tunnel
                 networkStream = r.GetStream();
                 networkReadStream = networkStream.AsInputStream();
                 networkWriteStream = networkStream.AsOutputStream();
-                //remoteConnected = true;
             }
             catch (Exception)
             {
                 Debug.WriteLine("Error connecting to remote");
+                DisconnectRemote();
+                Reset();
                 return;
             }
             Debug.WriteLine("Connected");
@@ -143,6 +141,13 @@ namespace YtFlow.Tunnel
             header[6] = (byte)(_socket.RemotePort & 0xFF);
             */
             string domain = DnsProxyServer.Lookup((byte)((_socket.RemoteAddr >> 24 | (0x00FF0000 & _socket.RemoteAddr) >> 8)));
+            if (domain == null)
+            {
+                Debug.WriteLine("Cannot find DNS record");
+                DisconnectRemote();
+                Reset();
+                return;
+            }
             var header = new byte[domain.Length + 4];
             header[0] = 0x03;
             header[1] = (byte)domain.Length;
@@ -154,28 +159,32 @@ namespace YtFlow.Tunnel
             {
                 await networkWriteStream.WriteAsync(iv);
                 await networkWriteStream.WriteAsync(await Encrypt(header));
+                int bytesToConfirm = 0;
                 while (localbuf.TryDequeue(out var buf))
                 {
+                    bytesToConfirm += buf.Length;
                     await networkWriteStream.WriteAsync(await Encrypt(buf));
                 }
-                await networkWriteStream.FlushAsync();
+                Recved((ushort)bytesToConfirm);
+                //await networkWriteStream.FlushAsync();
                 remoteConnected = true;
                 Debug.WriteLine("Sent data with header");
             }
             catch (Exception)
             {
-                Debug.WriteLine("Error establishing a connection to remote");
+                Debug.WriteLine("Error sending header to remote");
+                DisconnectRemote();
+                Reset();
                 return;
             }
 
-            // byte[] remotebuf = new byte[2048];
             IBuffer remotebuf;
             while (r.Connected)
             {
                 try
                 {
                     remotebuf = WindowsRuntimeBuffer.Create(RECV_BUFFER_LEN);
-                    var res = await networkReadStream.ReadAsync(remotebuf, RECV_BUFFER_LEN, InputStreamOptions.Partial);
+                    var res = await networkReadStream.ReadAsync(remotebuf, RECV_BUFFER_LEN, InputStreamOptions.Partial).AsTask().ConfigureAwait(false);
                     var len = res.Length;
                     if (len == 0)
                     {
@@ -185,7 +194,7 @@ namespace YtFlow.Tunnel
                     Debug.WriteLine($"Received {len} bytes");
 #endif
 
-                    RemoteReceived(await Decrypt(res.ToArray()));
+                    await RemoteReceived(await Decrypt(res.ToArray()));
                 }
                 catch (Exception)
                 {
@@ -196,39 +205,42 @@ namespace YtFlow.Tunnel
             try
             {
                 Debug.WriteLine("Remote sent no data");
-                networkReadStream.Dispose();
+                networkReadStream?.Dispose();
                 Close();
-                // DisconnectRemote();
             }
             catch (Exception) { }
         }
 
         protected override async void DisconnectRemote ()
         {
+            if (RemoteDisconnecting)
+            {
+                return;
+            }
+            RemoteDisconnecting = true;
             try
             {
-                while (localbuf.TryDequeue(out var buf))
+                if (!localbuf.IsEmpty)
                 {
-                    await networkWriteStream.WriteAsync(await Encrypt(buf));
+                    while (localbuf.TryDequeue(out var buf))
+                    {
+                        await networkWriteStream?.WriteAsync(await Encrypt(buf));
+                    }
+                    await networkWriteStream?.FlushAsync();
                 }
             }
             catch (Exception) { }
             try
             {
-                await networkWriteStream.FlushAsync();
-            }
-            catch (Exception) { }
-            remoteConnected = false;
-            try
-            {
-                // networkStream.Dispose();
-                networkWriteStream.Dispose();
+                networkWriteStream?.Dispose();
                 Debug.WriteLine("Disposed remote write stream");
             }
             catch (Exception)
             {
                 Debug.WriteLine("Error closing remote write stream");
             }
+            RemoteDisconnected = true;
+            CheckShutdown();
             // try
             // {
             //     r.Dispose();
@@ -248,6 +260,7 @@ namespace YtFlow.Tunnel
                 {
                     await networkWriteStream.WriteAsync(await Encrypt(buffer));
                     await networkWriteStream.FlushAsync();
+                    Recved((ushort)buffer.Length);
 #if YTLOG_VERBOSE
                     Debug.WriteLine("Sent data" + buffer.Length);
 #endif
@@ -267,7 +280,21 @@ namespace YtFlow.Tunnel
                 Debug.WriteLine("Queued data" + buffer.Length);
 #endif
             }
+        }
 
+        protected override void CheckShutdown ()
+        {
+            if (IsShutdown)
+            {
+                encLock.Dispose();
+                decLock.Dispose();
+                cryptor?.Dispose();
+                networkReadStream.Dispose();
+                networkStream.Dispose();
+                r.Dispose();
+                // r.Client.Dispose();
+            }
+            base.CheckShutdown();
         }
     }
 }

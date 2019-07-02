@@ -8,10 +8,10 @@ namespace YtFlow.Tunnel
     internal delegate void SocketFinishedHandler(object sender);
     internal interface IAdapterSocket
     {
-        void Write(IBuffer e);
-        event ReadDataHandler ReadData;
-        event SocketErrorHandler OnError;
-        void Close();
-        void Reset();
+        // void Write(IBuffer e);
+        // event ReadDataHandler ReadData;
+        // event SocketErrorHandler OnError;
+        // void Close();
+        // void Reset();
     }
 }

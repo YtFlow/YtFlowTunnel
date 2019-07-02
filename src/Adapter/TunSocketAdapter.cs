@@ -1,6 +1,8 @@
 ﻿using System;
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.IO.Pipelines;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
 using System.Threading;
@@ -12,12 +14,20 @@ namespace YtFlow.Tunnel
 {
     internal abstract class TunSocketAdapter : IAdapterSocket
     {
-        const int MAX_BUFF_SIZE = 2048;
+        //const int MAX_BUFF_SIZE = 2048;
         protected TcpSocket _socket;
         protected TunInterface _tun;
-        protected BlockingCollection<IBuffer> sendBuffers = new BlockingCollection<IBuffer>(1024);
-        private Task sendBufferTask;
-        private bool sendBufferFinished = false;
+        //protected BlockingCollection<IBuffer> sendBuffers = new BlockingCollection<IBuffer>(1024);
+        //private Task sendBufferTask;
+        //private bool sendBufferFinished = false;
+        protected PipeReader pipeReader;
+        protected PipeWriter pipeWriter;
+        protected bool LocalDisconnecting { get; set; } = false;
+        protected bool LocalDisconnected { get; set; } = false;
+        protected SemaphoreSlim localStackBufLock = new SemaphoreSlim(1, 1);
+        protected int localStackByteCount = 11680;
+        // private int localStackTrunkSize = 4096;
+        public virtual bool IsShutdown { get; }
         public event ReadDataHandler ReadData;
         public event SocketErrorHandler OnError;
         public event SocketFinishedHandler OnFinished;
@@ -38,6 +48,9 @@ namespace YtFlow.Tunnel
 
         internal TunSocketAdapter (TcpSocket socket, TunInterface tun)
         {
+            var pipe = new Pipe();
+            pipeReader = pipe.Reader;
+            pipeWriter = pipe.Writer;
             _socket = socket;
             _tun = tun;
 
@@ -45,40 +58,91 @@ namespace YtFlow.Tunnel
             socket.DataSent += Socket_DataSent;
             socket.SocketError += Socket_SocketError;
 
-            sendBufferTask = Task.Run(async () =>
-            {
-                while (!sendBufferFinished && !sendBuffers.IsAddingCompleted)
-                {
-                    IBuffer buf;
-                    try
-                    {
-                        buf = await Task.Run(() => sendBuffers.Take());
-                    }
-                    catch (InvalidOperationException)
-                    {
-#if YTLOG_VERBOSE
-                        Debug.WriteLine("No data sent to local");
-#endif
-                        break;
-                    }
-                    var result = await _tun.executeLwipTask(() => _socket.Send(buf.ToArray()));
-                    while (result != 0 && !sendBufferFinished)
-                    {
-                        await Task.Delay(10);
-                        result = await _tun.executeLwipTask(() => _socket.Send(buf.ToArray()));
-                    }
-                    Debug.WriteLine("Data sent to local");
-                    /*if (sendBuffers.Count == 0)
-                    {
-                        await _tun.executeLwipTask(() => _socket.Output());
-                    }*/
-                }
-            });
+            StartPolling();
         }
 
-        private void checkSendBuffers ()
+        /// <deprecated>
+        /// Not used. For reference only.
+        /// </deprecated>
+        private async void StartPolling1 ()
         {
-            // checkSendBufferHandle.Set();
+            while (true)
+            {
+                var readResult = await pipeReader.ReadAsync().ConfigureAwait(false);
+                ReadOnlySequence<byte> buffer = readResult.Buffer;
+                SequencePosition? position = buffer.Start;
+                var remainingBytes = buffer.Length;
+                var writeResult = (byte)0;
+                while (remainingBytes > 0)
+                {
+                    while (localStackByteCount == 0)
+                    {
+                        await _tun.executeLwipTask(() => _socket.Output());
+                        await localStackBufLock.WaitAsync().ConfigureAwait(false);
+                    }
+                    var bytesToWriteCount = Math.Min(remainingBytes, localStackByteCount);
+                    var chunk = buffer.Slice(position.Value, bytesToWriteCount);
+                    var arr = chunk.ToArray();
+                    var more = remainingBytes != bytesToWriteCount;
+                    writeResult = await _tun.executeLwipTask(() => _socket.Send(arr, more));
+                    if (writeResult != 0)
+                    {
+                        OnError?.Invoke(this, writeResult);
+                        pipeReader.Complete();
+                        return;
+                    }
+                    remainingBytes -= bytesToWriteCount;
+                    position = buffer.GetPosition(bytesToWriteCount, position.Value);
+                    Interlocked.Add(ref localStackByteCount, (int)-bytesToWriteCount);
+                }
+                pipeReader.AdvanceTo(position.Value, position.Value);
+                await _tun.executeLwipTask(() => _socket.Output());
+
+                if (readResult.IsCanceled || readResult.IsCompleted || writeResult != 0)
+                {
+                    break;
+                }
+            }
+            pipeReader.Complete();
+            await _tun.executeLwipTask(() => _socket.Close());
+            Debug.WriteLine($"{TcpSocket.ConnectionCount()} connections now");
+            LocalDisconnected = true;
+            OnFinished(this);
+            CheckShutdown();
+        }
+
+        private async void StartPolling ()
+        {
+            while (true)
+            {
+                await localStackBufLock.WaitAsync();
+                var readResult = await pipeReader.ReadAsync().ConfigureAwait(false);
+                var buffer = readResult.Buffer;
+                ReadOnlySequence<byte> chunk = buffer.Slice(0, Math.Min(buffer.Length, localStackByteCount));
+                var arr = chunk.ToArray();
+                var more = false;
+                var writeResult = await _tun.executeLwipTask(() => _socket.Send(arr, more));
+                if (writeResult != 0)
+                {
+                    OnError?.Invoke(this, writeResult);
+                    pipeReader.Complete();
+                    return;
+                }
+                Interlocked.Add(ref localStackByteCount, (int)-chunk.Length);
+                pipeReader.AdvanceTo(chunk.End, chunk.End);
+                // await _tun.executeLwipTask(() => _socket.Output());
+
+                if (readResult.IsCanceled || readResult.IsCompleted || writeResult != 0)
+                {
+                    break;
+                }
+            }
+            pipeReader.Complete();
+            await _tun.executeLwipTask(() => _socket.Close());
+            Debug.WriteLine($"{TcpSocket.ConnectionCount()} connections now");
+            LocalDisconnected = true;
+            OnFinished(this);
+            CheckShutdown();
         }
 
         protected virtual void Socket_SocketError (TcpSocket sender, int err)
@@ -86,12 +150,18 @@ namespace YtFlow.Tunnel
             // tcp_pcb has been freed already
             // No need to close
             // Close();
+            LocalDisconnecting = LocalDisconnected = false;
             OnError?.Invoke(this, err);
+            CheckShutdown();
         }
 
         protected virtual void Socket_DataSent (TcpSocket sender, ushort length)
         {
-            checkSendBuffers();
+            Interlocked.Add(ref localStackByteCount, length);
+            if (localStackBufLock.CurrentCount == 0)
+            {
+                localStackBufLock.Release();
+            }
         }
 
         protected virtual void Socket_DataReceived (TcpSocket sender, byte[] bytes)
@@ -105,48 +175,46 @@ namespace YtFlow.Tunnel
             else
             {
                 ReadData(this, bytes);
-                checkSendBuffers();
             }
         }
 
         public virtual void Close ()
         {
             // _tun.executeLwipTask(() => _socket.Close());
-            Debug.WriteLine($"{TcpSocket.ConnectionCount()} connections now");
-            finishSendBuffer();
+            LocalDisconnecting = true;
+            pipeWriter.Complete();
         }
 
         public virtual void Reset ()
         {
+            LocalDisconnecting = LocalDisconnected = true;
             _tun.executeLwipTask(() => _socket.Abort());
-            finishSendBuffer();
+            CheckShutdown();
         }
 
-        private void finishSendBuffer ()
+        public void Recved (ushort len)
         {
-            sendBufferFinished = true;
-            sendBuffers.CompleteAdding();
-            // checkSendBufferHandle.Set();
+            _tun.executeLwipTask(() => _socket.Recved(len));
         }
 
-        public virtual void Write (IBuffer e)
+        public virtual async Task Write (Memory<byte> e)
         {
-            //for (int i = 0; i < bytes.Length; i += MAX_BUFF_SIZE)
-            //{
-            //    sendBuffers.Enqueue(bytes.AsBuffer(i, Math.Min(bytes.Length - i, MAX_BUFF_SIZE)));
-            //    checkSendBuffers();
-            //}
-
-            try
-            {
-                sendBuffers.TryAdd(e);
-            }
-            catch (Exception)
-            {
-                ;
-            }
+            var memory = pipeWriter.GetMemory(e.Length);
+            e.CopyTo(memory);
+            pipeWriter.Advance(e.Length);
+            await pipeWriter.FlushAsync();
             // checkSendBuffers();
-            // return _tun.executeLwipTask(() => _socket.Send(e.ToArray()));
+        }
+
+        protected virtual void CheckShutdown ()
+        {
+            if (IsShutdown)
+            {
+                _socket.DataReceived -= Socket_DataReceived;
+                _socket.DataSent -= Socket_DataSent;
+                _socket.SocketError -= Socket_SocketError;
+                localStackBufLock.Dispose();
+            }
         }
     }
 }

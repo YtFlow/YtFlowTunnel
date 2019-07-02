@@ -15,9 +15,11 @@ namespace YtFlow.Tunnel
     public sealed class TunInterface
     {
         // ConcurrentQueue<Action> dispatchQ = new ConcurrentQueue<Action>();
+        // SemaphoreSlim dispatchLocker = new SemaphoreSlim(1, 1);
         BlockingCollection<Action> dispatchWorks = new BlockingCollection<Action>();
         Task dispatchWorker;
-        EventWaitHandle dispatchWaitHandle = new EventWaitHandle(false, EventResetMode.AutoReset);
+        // EventWaitHandle dispatchWaitHandle = new EventWaitHandle(false, EventResetMode.AutoReset);
+        List<TunSocketAdapter> adapters = new List<TunSocketAdapter>();
         Wintun w = Wintun.Instance;
         DnsProxyServer dnsServer = new DnsProxyServer();
         Action<string> Write;
@@ -30,6 +32,14 @@ namespace YtFlow.Tunnel
             // dispatchQ.Enqueue(act);
             dispatchWorks.Add(act);
             // dispatchWaitHandle.Set();
+            /*if (dispatchLocker.CurrentCount == 0)
+            {
+                try
+                {
+                    dispatchLocker.Release();
+                }
+                catch (SemaphoreFullException) { }
+            }*/
         }
         internal Task<TResult> executeLwipTask<TResult> (Func<TResult> act)
         {
@@ -47,6 +57,14 @@ namespace YtFlow.Tunnel
                     tcs.TrySetException(ex);
                 }
             });
+            /*if (dispatchLocker.CurrentCount == 0)
+            {
+                try
+                {
+                    dispatchLocker.Release();
+                }
+                catch (SemaphoreFullException) { }
+            }*/
             // dispatchWaitHandle.Set();
             return tcs.Task;
         }
@@ -54,12 +72,14 @@ namespace YtFlow.Tunnel
         {
             while (true)
             {
-                // while (dispatchQ.TryDequeue(out Action act))
+                Action act;
+                //if (!dispatchQ.TryDequeue(out act))
                 // {
                 // Debug.WriteLine($"{dispatchQ.Count} tasks remain");
                 //Task.Run(() =>
-                if (!dispatchWorks.TryTake(out var act, 100))
+                if (!dispatchWorks.TryTake(out act, 250))
                 {
+                    //await dispatchLocker.WaitAsync();
                     continue;
                 }
                 try
@@ -108,8 +128,8 @@ namespace YtFlow.Tunnel
         {
             try
             {
-                var res = await dnsServer.QueryAsync(e);
-                await executeLwipTask(() => w.PushDnsPayload(addr, port, new List<byte>(res).ToArray()));
+                var res = await dnsServer.QueryAsync(e).ConfigureAwait(false);
+                await executeLwipTask(() => w.PushDnsPayload(addr, port, res));
             }
             catch (Exception)
             {
@@ -119,9 +139,13 @@ namespace YtFlow.Tunnel
 
         private void W_EstablishTcp (TcpSocket socket)
         {
-            Debug.WriteLine($"{TcpSocket.ConnectionCount()} connections now");
             // ShadowsocksR server with procotol=origin, method=aes-128-cfb
-            new RawShadowsocksAdapter("80.80.80.80", 1234, "yourpassword", socket, this);
+            var adapter = new RawShadowsocksAdapter("80.80.80.80", 1234, "yourpassword", socket, this);
+            adapters.Add(adapter);
+            if (adapters.Count > 150)
+            {
+                adapters.RemoveAll(a => a.IsShutdown);
+            }
         }
 
         private void W_PopPacket (object sender, byte[] e)

@@ -17,7 +17,7 @@ using Windows.Networking.Sockets;
 
 namespace YtFlow.Tunnel.DNS
 {
-    public sealed class DnsProxyServer : IDisposable
+    internal class DnsProxyServer : IDisposable
     {
         private DnsClient client = new DnsClient("10.68.12.236");
         private static ConcurrentDictionary<int, string> lookupTable = new ConcurrentDictionary<int, string>();
@@ -28,10 +28,11 @@ namespace YtFlow.Tunnel.DNS
             lookupTable.Clear();
         }
 
-        private async Task<IList<byte>> Query (
+        private async Task<byte[]> Query (
             byte[] payload)
         {
-            var req = Request.FromArray(payload);
+            Request req;
+            req = Request.FromArray(payload);
             Debug.WriteLine("DNS request: " + req.Questions[0].Name);
             //var res = await clireq.Resolve();
             Response res = new Response();
@@ -84,11 +85,11 @@ namespace YtFlow.Tunnel.DNS
             return ret;
         }
 
-        public IAsyncOperation<IList<byte>> QueryAsync (
+        public Task<byte[]> QueryAsync (
             [ReadOnlyArray]
             byte[] payload)
         {
-            return Query(payload).AsAsyncOperation();
+            return Query(payload);
         }
     }
 }
