@@ -178,12 +178,11 @@ namespace YtFlow.Tunnel
                 return;
             }
 
-            IBuffer remotebuf;
-            while (r.Connected)
+            IBuffer remotebuf = WindowsRuntimeBuffer.Create(RECV_BUFFER_LEN);
+            while (r.Connected && networkReadStream != null)
             {
                 try
                 {
-                    remotebuf = WindowsRuntimeBuffer.Create(RECV_BUFFER_LEN);
                     var res = await networkReadStream.ReadAsync(remotebuf, RECV_BUFFER_LEN, InputStreamOptions.Partial).AsTask().ConfigureAwait(false);
                     var len = res.Length;
                     if (len == 0)
@@ -289,9 +288,9 @@ namespace YtFlow.Tunnel
                 encLock.Dispose();
                 decLock.Dispose();
                 cryptor?.Dispose();
-                networkReadStream.Dispose();
-                networkStream.Dispose();
-                r.Dispose();
+                networkReadStream?.Dispose();
+                networkStream?.Dispose();
+                r?.Dispose();
                 // r.Client.Dispose();
             }
             base.CheckShutdown();

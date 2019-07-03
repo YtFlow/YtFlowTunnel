@@ -2,6 +2,7 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Threading;
 using System.Threading.Tasks;
@@ -22,8 +23,7 @@ namespace YtFlow.Tunnel
         List<TunSocketAdapter> adapters = new List<TunSocketAdapter>();
         Wintun w = Wintun.Instance;
         DnsProxyServer dnsServer = new DnsProxyServer();
-        Action<string> Write;
-        Action<string> WriteLine;
+        bool running = false;
 
         public event PacketPopedHandler PacketPoped;
 
@@ -70,7 +70,7 @@ namespace YtFlow.Tunnel
         }
         private async void doWork ()
         {
-            while (true)
+            while (running)
             {
                 Action act;
                 //if (!dispatchQ.TryDequeue(out act))
@@ -101,11 +101,11 @@ namespace YtFlow.Tunnel
         }
         public async void Init ()
         {
-            WriteLine = Write = str =>
+            if (running)
             {
-                // logger(str);
-                //return null;
-            };
+                return;
+            }
+            running = true;
             dispatchWorker = Task.Run(() => doWork());
 
             w.PacketPoped += W_PopPacket;
@@ -113,7 +113,7 @@ namespace YtFlow.Tunnel
             TcpSocket.EstablishedTcp += W_EstablishTcp;
 
             w.Init();
-            while (true)
+            while (running)
             {
                 await Task.Delay(250);
                 await executeLwipTask(() =>
@@ -122,6 +122,32 @@ namespace YtFlow.Tunnel
                     return 0;
                 });
             }
+        }
+        public async void Deinit ()
+        {
+            if (!running)
+            {
+                return;
+            }
+            foreach (var adapter in adapters.Where(a => !a.IsShutdown))
+            {
+                try
+                {
+                    adapter.Reset();
+                }
+                catch (Exception) { }
+            }
+
+            await Task.Delay(300);
+            w.Deinit();
+            w.PacketPoped -= W_PopPacket;
+            w.DnsPacketPoped -= W_DnsPacketPoped;
+            TcpSocket.EstablishedTcp -= W_EstablishTcp;
+
+            adapters.Clear();
+            dnsServer.Clear();
+            dispatchWorker = null;
+            running = false;
         }
 
         private async void W_DnsPacketPoped (object sender, byte[] e, uint addr, ushort port)

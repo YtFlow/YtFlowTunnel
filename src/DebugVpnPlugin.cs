@@ -30,7 +30,11 @@ namespace YtFlow.Tunnel
                 if (channel.PlugInContext == null)
                 {
                     LogLine("Initializing new context", channel);
+#if YT_MOCK
                     channel.PlugInContext = context = new DebugVpnContext();
+#else
+                    channel.PlugInContext = context = new DebugVpnContext("9008");
+#endif
                 }
                 else
                 {
@@ -41,8 +45,8 @@ namespace YtFlow.Tunnel
                 {
                     LogLine("Binded", channel);
                 }).Wait();
-#if true
-                context.Init("9008");
+#if !YT_MOCK
+                context.Init();
 #endif
                 /* var rport = context.Init(transport.Information.LocalPort, str =>
                 {
@@ -122,9 +126,9 @@ namespace YtFlow.Tunnel
             }
             var context = (DebugVpnContext)channel.PlugInContext;
             channel.Stop();
+            context.Stop();
             LogLine("channel stopped", channel);
-            channel.PlugInContext = null;
-            LogLine("Disconnected", channel);
+            //channel.PlugInContext = null;
             State = VpnPluginState.Disconnected;
             def?.Complete();
         }

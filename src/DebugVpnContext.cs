@@ -8,16 +8,27 @@ namespace YtFlow.Tunnel
     internal class DebugVpnContext
     {
         private DatagramSocket s;
-        private TunInterface tun = new TunInterface();
-        public void Init(string port)
+        private TunInterface tun;
+        public DebugVpnContext()
         {
+
+        }
+        public DebugVpnContext(string port)
+        {
+            tun = new TunInterface();
             s = new DatagramSocket();
             s.MessageReceived += S_MessageReceived;
             s.BindEndpointAsync(new HostName("127.0.0.1"), port).AsTask().Wait();
             s.ConnectAsync(new HostName("127.0.0.1"), "9007").AsTask().Wait();
-            tun.Init();
             tun.PacketPoped += Tun_PacketPoped;
-            
+        }
+        public void Init()
+        {
+            tun?.Init();
+        }
+        public void Stop()
+        {
+            tun?.Deinit();
         }
 
         private void Tun_PacketPoped(object sender, byte[] e)

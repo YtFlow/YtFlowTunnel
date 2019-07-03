@@ -1,29 +1,22 @@
 ﻿using DNS.Client;
-using DNS.Client.RequestResolver;
 using DNS.Protocol;
 using DNS.Protocol.ResourceRecords;
-using DNS.Server;
 using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices.WindowsRuntime;
-using System.Text;
 using System.Threading.Tasks;
-using Windows.Foundation;
-using Windows.Networking;
-using Windows.Networking.Sockets;
 
 namespace YtFlow.Tunnel.DNS
 {
-    internal class DnsProxyServer : IDisposable
+    internal class DnsProxyServer
     {
         private DnsClient client = new DnsClient("10.68.12.236");
         private static ConcurrentDictionary<int, string> lookupTable = new ConcurrentDictionary<int, string>();
         private static ConcurrentDictionary<string, int> rlookupTable = new ConcurrentDictionary<string, int>();
 
-        public void Dispose ()
+        public void Clear ()
         {
             lookupTable.Clear();
         }
