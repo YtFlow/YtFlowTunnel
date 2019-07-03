@@ -148,31 +148,44 @@ namespace YtFlow.Tunnel
                 Reset();
                 return;
             }
-            var header = new byte[domain.Length + 4];
-            header[0] = 0x03;
-            header[1] = (byte)domain.Length;
-            Encoding.ASCII.GetBytes(domain).CopyTo(header, 2);
-            header[header.Length - 2] = (byte)(_socket.RemotePort >> 8);
-            header[header.Length - 1] = (byte)(_socket.RemotePort & 0xFF);
+            byte[] firstSeg = null;
+            int headerLen = domain.Length + 4;
+            int bytesToConfirm = 0;
+            if (localbuf.TryDequeue(out var firstBuf))
+            {
+                bytesToConfirm = firstBuf.Length;
+                firstSeg = new byte[headerLen + firstBuf.Length];
+                Array.Copy(firstBuf, 0, firstSeg, headerLen, firstBuf.Length);
+            }
+            else
+            {
+                firstSeg = new byte[headerLen];
+            }
+            firstSeg[0] = 0x03;
+            firstSeg[1] = (byte)domain.Length;
+            Encoding.ASCII.GetBytes(domain).CopyTo(firstSeg, 2);
+            firstSeg[headerLen - 2] = (byte)(_socket.RemotePort >> 8);
+            firstSeg[headerLen - 1] = (byte)(_socket.RemotePort & 0xFF);
+            var (encryptedFirstSeg, encryptedFirstSegLen) = await Encrypt(firstSeg, (uint)firstSeg.Length);
+            var dataToSend = new byte[encryptedFirstSegLen + iv.Length];
+            Array.Copy(iv, dataToSend, iv.Length);
+            Array.Copy(encryptedFirstSeg, 0, dataToSend, iv.Length, (int)encryptedFirstSegLen);
 
             try
             {
                 // await networkWriteStream.WriteAsync(iv);
                 // await networkWriteStream.WriteAsync(await Encrypt(header));
-                await networkStream.WriteAsync(iv, 0, iv.Length);
-                var (data, len) = await Encrypt(header, (uint)header.Length);
-                await networkStream.WriteAsync(data, 0, (int)len);
-                int bytesToConfirm = 0;
+                await networkStream.WriteAsync(dataToSend, 0, dataToSend.Length);
                 while (localbuf.TryDequeue(out var buf))
                 {
                     bytesToConfirm += buf.Length;
                     // await networkWriteStream.WriteAsync(await Encrypt(buf));
-                    (data, len) = await Encrypt(buf, (uint)buf.Length);
+                    var (data, len) = await Encrypt(buf, (uint)buf.Length);
                     await networkStream.WriteAsync(data, 0, (int)len);
                 }
+                remoteConnected = true;
                 Recved((ushort)bytesToConfirm);
                 //await networkWriteStream.FlushAsync();
-                remoteConnected = true;
                 Debug.WriteLine("Sent data with header");
             }
             catch (Exception)
