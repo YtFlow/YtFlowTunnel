@@ -35,6 +35,7 @@ namespace YtFlow.Tunnel.DNS
             {
                 res.Questions.Add(q);
             }
+            var dom = res.Questions[0].Name.ToString();
             /*
             if (res.Questions[0].Name.ToString() != "myip.ipip.net" && res.Questions[0].Name.ToString() != "ip.sb")
             {

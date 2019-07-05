@@ -24,7 +24,7 @@ namespace YtFlow.Tunnel
         }
         public void Init()
         {
-            tun?.Init();
+            tun?.Init(s);
         }
         public void Stop()
         {
@@ -33,7 +33,7 @@ namespace YtFlow.Tunnel
 
         private void Tun_PacketPoped(object sender, byte[] e)
         {
-            s.OutputStream.WriteAsync(e.AsBuffer()).AsTask();
+            var _ = s.OutputStream.WriteAsync(e.AsBuffer());
         }
 
         private void S_MessageReceived(DatagramSocket sender, DatagramSocketMessageReceivedEventArgs args)

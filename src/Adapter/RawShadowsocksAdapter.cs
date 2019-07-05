@@ -73,9 +73,9 @@ namespace YtFlow.Tunnel
             return (key, iv);
         }
 
-        public async Task<(byte[] data, uint len)> Encrypt (byte[] data, uint len)
+        public (byte[] data, uint len) Encrypt (byte[] data, uint len)
         {
-            await encLock.WaitAsync();
+            // await encLock.WaitAsync();
             try
             {
                 var outArr = new byte[len];
@@ -84,13 +84,13 @@ namespace YtFlow.Tunnel
             }
             finally
             {
-                encLock.Release();
+                // encLock.Release();
             }
         }
 
-        public async Task<Memory<byte>> Decrypt (byte[] data, uint len)
+        public Memory<byte> Decrypt (byte[] data, uint len)
         {
-            await decLock.WaitAsync();
+            // await decLock.WaitAsync();
             try
             {
                 var outLen = cryptor.Decrypt(data, len, decryptBuf);
@@ -98,7 +98,7 @@ namespace YtFlow.Tunnel
             }
             finally
             {
-                decLock.Release();
+                // decLock.Release();
             }
         }
 
@@ -166,7 +166,7 @@ namespace YtFlow.Tunnel
             Encoding.ASCII.GetBytes(domain).CopyTo(firstSeg, 2);
             firstSeg[headerLen - 2] = (byte)(_socket.RemotePort >> 8);
             firstSeg[headerLen - 1] = (byte)(_socket.RemotePort & 0xFF);
-            var (encryptedFirstSeg, encryptedFirstSegLen) = await Encrypt(firstSeg, (uint)firstSeg.Length);
+            var (encryptedFirstSeg, encryptedFirstSegLen) = Encrypt(firstSeg, (uint)firstSeg.Length);
             var dataToSend = new byte[encryptedFirstSegLen + iv.Length];
             Array.Copy(iv, dataToSend, iv.Length);
             Array.Copy(encryptedFirstSeg, 0, dataToSend, iv.Length, (int)encryptedFirstSegLen);
@@ -180,7 +180,7 @@ namespace YtFlow.Tunnel
                 {
                     bytesToConfirm += buf.Length;
                     // await networkWriteStream.WriteAsync(await Encrypt(buf));
-                    var (data, len) = await Encrypt(buf, (uint)buf.Length);
+                    var (data, len) = Encrypt(buf, (uint)buf.Length);
                     await networkStream.WriteAsync(data, 0, (int)len);
                 }
                 remoteConnected = true;
@@ -211,7 +211,7 @@ namespace YtFlow.Tunnel
                     Debug.WriteLine($"Received {len} bytes");
 #endif
 
-                    await RemoteReceived(await Decrypt(remotebuf, (uint)len));
+                    await RemoteReceived(Decrypt(remotebuf, (uint)len));
                 }
                 catch (Exception)
                 {
@@ -242,7 +242,7 @@ namespace YtFlow.Tunnel
                 {
                     while (localbuf.TryDequeue(out var buf))
                     {
-                        var (data, len) = await Encrypt(buf, (uint)buf.Length);
+                        var (data, len) = Encrypt(buf, (uint)buf.Length);
                         await networkStream?.WriteAsync(data, 0, (int)len);
                     }
                     await networkStream?.FlushAsync();
@@ -278,7 +278,7 @@ namespace YtFlow.Tunnel
             {
                 try
                 {
-                    var (data, len) = await Encrypt(buffer, (uint)buffer.Length);
+                    var (data, len) = Encrypt(buffer, (uint)buffer.Length);
                     await networkStream.WriteAsync(data, 0, (int)len);
                     await networkStream.FlushAsync();
                     Recved((ushort)buffer.Length);

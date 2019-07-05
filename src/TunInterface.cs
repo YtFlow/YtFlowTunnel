@@ -6,6 +6,7 @@ using System.Linq;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Threading;
 using System.Threading.Tasks;
+using Windows.Networking.Sockets;
 using Windows.UI.Core;
 using Wintun2socks;
 using YtFlow.Tunnel.DNS;
@@ -15,9 +16,9 @@ namespace YtFlow.Tunnel
     public delegate void PacketPopedHandler (object sender, [ReadOnlyArray] byte[] e);
     public sealed class TunInterface
     {
-        // ConcurrentQueue<Action> dispatchQ = new ConcurrentQueue<Action>();
-        // SemaphoreSlim dispatchLocker = new SemaphoreSlim(1, 1);
-        BlockingCollection<Action> dispatchWorks = new BlockingCollection<Action>();
+        ConcurrentQueue<Action> dispatchQ = new ConcurrentQueue<Action>();
+        SemaphoreSlim dispatchLocker = new SemaphoreSlim(1, 100);
+        // BlockingCollection<Action> dispatchWorks = new BlockingCollection<Action>();
         Task dispatchWorker;
         // EventWaitHandle dispatchWaitHandle = new EventWaitHandle(false, EventResetMode.AutoReset);
         List<TunSocketAdapter> adapters = new List<TunSocketAdapter>();
@@ -29,23 +30,23 @@ namespace YtFlow.Tunnel
 
         internal void executeLwipTask (Action act)
         {
-            // dispatchQ.Enqueue(act);
-            dispatchWorks.Add(act);
+            dispatchQ.Enqueue(act);
+            // dispatchWorks.Add(act);
             // dispatchWaitHandle.Set();
-            /*if (dispatchLocker.CurrentCount == 0)
+            if (dispatchLocker.CurrentCount == 0)
             {
                 try
                 {
                     dispatchLocker.Release();
                 }
                 catch (SemaphoreFullException) { }
-            }*/
+            }
         }
         internal Task<TResult> executeLwipTask<TResult> (Func<TResult> act)
         {
             TaskCompletionSource<TResult> tcs = new TaskCompletionSource<TResult>();
-            // dispatchQ.Enqueue(() =>
-            dispatchWorks.Add(() =>
+            dispatchQ.Enqueue(() =>
+            // dispatchWorks.Add(() =>
             {
                 try
                 {
@@ -57,14 +58,14 @@ namespace YtFlow.Tunnel
                     tcs.TrySetException(ex);
                 }
             });
-            /*if (dispatchLocker.CurrentCount == 0)
+            if (dispatchLocker.CurrentCount == 0)
             {
                 try
                 {
                     dispatchLocker.Release();
                 }
                 catch (SemaphoreFullException) { }
-            }*/
+            }
             // dispatchWaitHandle.Set();
             return tcs.Task;
         }
@@ -73,13 +74,13 @@ namespace YtFlow.Tunnel
             while (running)
             {
                 Action act;
-                //if (!dispatchQ.TryDequeue(out act))
+                if (!dispatchQ.TryDequeue(out act))
                 // {
                 // Debug.WriteLine($"{dispatchQ.Count} tasks remain");
                 //Task.Run(() =>
-                if (!dispatchWorks.TryTake(out act, 250))
+                //if (!dispatchWorks.TryTake(out act, 250))
                 {
-                    //await dispatchLocker.WaitAsync();
+                    await dispatchLocker.WaitAsync(250);
                     continue;
                 }
                 try
@@ -99,7 +100,7 @@ namespace YtFlow.Tunnel
                 // dispatchWaitHandle.WaitOne();
             }
         }
-        public async void Init ()
+        public async void Init (DatagramSocket outputSocket)
         {
             if (running)
             {
@@ -112,7 +113,7 @@ namespace YtFlow.Tunnel
             w.DnsPacketPoped += W_DnsPacketPoped;
             TcpSocket.EstablishedTcp += W_EstablishTcp;
 
-            w.Init();
+            w.Init(outputSocket);
             while (running)
             {
                 await Task.Delay(250);
@@ -186,6 +187,6 @@ namespace YtFlow.Tunnel
         }
 
         public uint ConnectionCount { get => TcpSocket.ConnectionCount(); }
-        public int TaskCount { get => dispatchWorks.Count; }
+        public int TaskCount { get => dispatchQ.Count; }
     }
 }

@@ -25,7 +25,7 @@ namespace YtFlow.Tunnel
         protected bool LocalDisconnecting { get; set; } = false;
         protected bool LocalDisconnected { get; set; } = false;
         protected SemaphoreSlim localStackBufLock = new SemaphoreSlim(1, 1);
-        protected int localStackByteCount = 11680;
+        private int localStackByteCount = 11680;
         // private int localStackTrunkSize = 4096;
         public virtual bool IsShutdown { get; }
         public event ReadDataHandler ReadData;
@@ -113,14 +113,14 @@ namespace YtFlow.Tunnel
 
         private async void StartPolling ()
         {
+            localStackByteCount = await _tun.executeLwipTask(() => _socket.SendBufferSize);
             while (true)
             {
-                await localStackBufLock.WaitAsync();
                 var readResult = await pipeReader.ReadAsync().ConfigureAwait(false);
                 var buffer = readResult.Buffer;
                 ReadOnlySequence<byte> chunk = buffer.Slice(0, Math.Min(buffer.Length, localStackByteCount));
                 var arr = chunk.ToArray();
-                var more = false;
+                var more = chunk.Length == localStackByteCount;
                 var writeResult = await _tun.executeLwipTask(() => _socket.Send(arr, more));
                 if (writeResult != 0)
                 {
