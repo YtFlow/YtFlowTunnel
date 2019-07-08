@@ -100,7 +100,7 @@ namespace YtFlow.Tunnel
                 // dispatchWaitHandle.WaitOne();
             }
         }
-        public async void Init (DatagramSocket outputSocket)
+        public async void Init ()
         {
             if (running)
             {
@@ -113,7 +113,7 @@ namespace YtFlow.Tunnel
             w.DnsPacketPoped += W_DnsPacketPoped;
             TcpSocket.EstablishedTcp += W_EstablishTcp;
 
-            w.Init(outputSocket);
+            w.Init();
             while (running)
             {
                 await Task.Delay(250);

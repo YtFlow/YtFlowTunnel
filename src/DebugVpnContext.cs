@@ -24,7 +24,7 @@ namespace YtFlow.Tunnel
         }
         public void Init()
         {
-            tun?.Init(s);
+            tun?.Init();
         }
         public void Stop()
         {
