@@ -38,7 +38,6 @@ namespace YtFlow.Tunnel
 
         private void S_MessageReceived(DatagramSocket sender, DatagramSocketMessageReceivedEventArgs args)
         {
-            var remotePort = args.RemotePort;
             var reader = args.GetDataReader();
             byte[] b = new byte[reader.UnconsumedBufferLength];
             reader.ReadBytes(b);

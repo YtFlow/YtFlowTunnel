@@ -127,6 +127,8 @@
     <Compile Include="TunInterface.cs" />
     <Compile Include="DebugVpnContext.cs" />
     <Compile Include="DebugVpnPlugin.cs" />
+    <Compile Include="VpnContext.cs" />
+    <Compile Include="VpnPlugin.cs" />
     <Compile Include="VpnPluginState.cs" />
     <Compile Include="VpnTask.cs" />
     <EmbeddedResource Include="Properties\YtFlowTunnel.rd.xml" />

@@ -183,7 +183,10 @@ namespace YtFlow.Tunnel
         public void PushPacket ([ReadOnlyArray] byte[] packet)
         {
             /*if (dispatchQ.Count < 100)*/
-            executeLwipTask(() => w.PushPacket(packet));
+            executeLwipTask(() =>
+            {
+                w.PushPacket(packet);
+            });
         }
 
         public uint ConnectionCount { get => TcpSocket.ConnectionCount(); }

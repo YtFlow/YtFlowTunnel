@@ -1,11 +1,10 @@
 ﻿using System;
-using System.Diagnostics;
 using System.Runtime.InteropServices.WindowsRuntime;
+using System.Threading;
 using Windows.ApplicationModel.Background;
 using Windows.Networking;
 using Windows.Networking.Sockets;
 using Windows.Networking.Vpn;
-using Windows.System.Diagnostics;
 
 namespace YtFlow.Tunnel
 {
@@ -13,12 +12,18 @@ namespace YtFlow.Tunnel
     {
         public BackgroundTaskDeferral def = null;
         public VpnPluginState State = VpnPluginState.Disconnected;
-        private void LogLine(string text, VpnChannel channel)
+
+        public VpnPlugin (BackgroundTaskDeferral deferral)
+        {
+            def = deferral;
+        }
+
+        private void LogLine (string text, VpnChannel channel)
         {
             //Debug.WriteLine(text);
             channel.LogDiagnosticMessage(text);
         }
-        public void Connect(VpnChannel channel)
+        public void Connect (VpnChannel channel)
         {
             State = VpnPluginState.Connecting;
             LogLine("Connecting", channel);
@@ -43,7 +48,7 @@ namespace YtFlow.Tunnel
                     LogLine("Binded", channel);
                 }).Wait();
 #if true
-                context.Init("9008");
+                context.Init();
 #endif
                 /* var rport = context.Init(transport.Information.LocalPort, str =>
                 {
@@ -105,10 +110,9 @@ namespace YtFlow.Tunnel
                 LogLine(ex.StackTrace, channel);
                 State = VpnPluginState.Disconnected;
             }
-            def?.Complete();
         }
 
-        public void Disconnect(VpnChannel channel)
+        public void Disconnect (VpnChannel channel)
         {
             State = VpnPluginState.Disconnecting;
             if (channel.PlugInContext == null)
@@ -123,40 +127,40 @@ namespace YtFlow.Tunnel
             }
             var context = (VpnContext)channel.PlugInContext;
             channel.Stop();
+            context.Stop();
             LogLine("channel stopped", channel);
-            channel.PlugInContext = null;
-            LogLine("Disconnected", channel);
+            // channel.PlugInContext = null;
+            // LogLine("Disconnected", channel);
             State = VpnPluginState.Disconnected;
             def?.Complete();
         }
 
-        public void GetKeepAlivePayload(VpnChannel channel, out VpnPacketBuffer keepAlivePacket)
+        public void GetKeepAlivePayload (VpnChannel channel, out VpnPacketBuffer keepAlivePacket)
         {
-            // Not needed
             keepAlivePacket = new VpnPacketBuffer(null, 0, 0);
         }
 
-        public void Encapsulate(VpnChannel channel, VpnPacketBufferList packets, VpnPacketBufferList encapulatedPackets)
+        public void Encapsulate (VpnChannel channel, VpnPacketBufferList packets, VpnPacketBufferList encapulatedPackets)
         {
             var context = channel.PlugInContext as VpnContext;
             // LogLine("Encapsulating", channel);
             while (packets.Size > 0)
             {
                 var packet = packets.RemoveAtBegin();
-                // encapulatedPackets.Append(packet);
-                context.PushPacket(packet.Buffer.ToArray());
-                LogLine("Encapsulated one packet" + packet.Buffer.ToArray().Length, channel);
+                encapulatedPackets.Append(packet);
             }
-            context.CheckPendingPacket();
+            //context.CheckPendingPacket();
         }
 
-        public void Decapsulate(VpnChannel channel, VpnPacketBuffer encapBuffer, VpnPacketBufferList decapsulatedPackets, VpnPacketBufferList controlPacketsToSend)
+        public void Decapsulate (VpnChannel channel, VpnPacketBuffer encapBuffer, VpnPacketBufferList decapsulatedPackets, VpnPacketBufferList controlPacketsToSend)
         {
             var context = channel.PlugInContext as VpnContext;
+            bool hasPacket = false;
             while (context.PendingPackets.TryDequeue(out byte[] originBuffer))
             {
+                hasPacket = true;
                 var buf = channel.GetVpnReceivePacketBuffer();
-                if (encapBuffer.Buffer.Length > buf.Buffer.Capacity)
+                if (originBuffer.Length > buf.Buffer.Capacity)
                 {
                     LogLine("Dropped one packet", channel);
                     //Drop larger packets.
@@ -164,23 +168,13 @@ namespace YtFlow.Tunnel
                 }
                 originBuffer.CopyTo(0, buf.Buffer, 0, originBuffer.Length);
                 buf.Buffer.Length = (uint)originBuffer.Length;
-                LogLine("Added one packet" + buf.Buffer.Length, channel);
+                //LogLine("Decap one packet " + buf.Buffer.Length, channel);
                 decapsulatedPackets.Append(buf);
             }
-            //var buf = channel.GetVpnReceivePacketBuffer();
-            // LogLine("Decapsulating one packet", channel);
-            //if (encapBuffer.Buffer.Length > buf.Buffer.Capacity)
-            //{
-            //    LogLine("Dropped one packet", channel);
-            //    //Drop larger packets.
-            //    return;
-            //}
-
-            //encapBuffer.Buffer.CopyTo(buf.Buffer);
-            //buf.Buffer.Length = encapBuffer.Buffer.Length;
-            //decapsulatedPackets.Append(buf);
-            // LogLine("Decapsulated one packet", channel);
-
+            if (hasPacket)
+            {
+                context.CheckPendingPacket();
+            }
         }
     }
 
