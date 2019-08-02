@@ -119,6 +119,7 @@
   <ItemGroup>
     <Compile Include="Adapter\IAdapterSocket.cs" />
     <Compile Include="Adapter\ProxyAdapter.cs" />
+    <Compile Include="Adapter\HttpAdapter.cs" />
     <Compile Include="Adapter\TrojanAdapter.cs" />
     <Compile Include="Adapter\RawShadowsocksAdapter.cs" />
     <Compile Include="Adapter\TunSocketAdapter.cs" />
