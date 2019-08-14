@@ -4,11 +4,13 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices.WindowsRuntime;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Windows.Networking.Sockets;
 using Windows.UI.Core;
 using Wintun2socks;
+using YtCrypto;
 using YtFlow.Tunnel.DNS;
 
 namespace YtFlow.Tunnel
@@ -164,10 +166,15 @@ namespace YtFlow.Tunnel
             }
         }
 
+        /// <summary>
+        /// Get or set the tunnel cryptor factory.
+        /// For Shadowsocks adapters, this field must be set before establishing any connection.
+        /// </summary>
+        public static CryptorFactory TunnelCryptorFactory { get; set; } = new CryptorFactory("aes-128-cfb", Encoding.UTF8.GetBytes("yourpassword"));
+
         private void W_EstablishTcp (TcpSocket socket)
         {
-            // ShadowsocksR server with procotol=origin, method=aes-128-cfb
-            var adapter = new RawShadowsocksAdapter("80.80.80.80", 1234, "yourpassword", socket, this);
+            var adapter = new ShadowsocksAdapter("80.80.80.80", 1234, TunnelCryptorFactory.CreateCryptor(), socket, this);
             adapters.Add(adapter);
             if (adapters.Count > 150)
             {

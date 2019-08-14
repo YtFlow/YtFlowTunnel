@@ -1,84 +1,36 @@
 ﻿using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
-using System.Linq;
 using System.Net.Sockets;
-using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices.WindowsRuntime;
-using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
-using System.Threading.Tasks;
-using Windows.Networking;
-using Windows.Networking.Sockets;
-using Windows.Security.Cryptography;
-using Windows.Security.Cryptography.Core;
-using Windows.Storage.Streams;
 using Wintun2socks;
 using YtCrypto;
 using YtFlow.Tunnel.DNS;
 
 namespace YtFlow.Tunnel
 {
-    internal sealed class RawShadowsocksAdapter : ProxyAdapter
+    internal sealed class ShadowsocksAdapter : ProxyAdapter
     {
         private const int RECV_BUFFER_LEN = 1024;
         TcpClient r = new TcpClient(AddressFamily.InterNetwork);
         NetworkStream networkStream;
-        // IInputStream networkReadStream;
-        // IOutputStream networkWriteStream;
         string server;
         int port;
         private ConcurrentQueue<byte[]> localbuf = new ConcurrentQueue<byte[]>();
         private SemaphoreSlim encLock = new SemaphoreSlim(1, 1);
         private SemaphoreSlim decLock = new SemaphoreSlim(1, 1);
-        private Test cryptor = null;
-        private byte[] iv = null;
+        private ICryptor cryptor = null;
         private byte[] decryptBuf = new byte[RECV_BUFFER_LEN];
         private bool remoteConnected = false;
-
-        [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.NoOptimization)]
-        public static (byte[] Key, byte[] Iv) EVP_BytesToKey (string password, int keyLen, int ivLen)
-        {
-            var passwordBytes = CryptographicBuffer.ConvertStringToBinary(password, BinaryStringEncoding.Utf8);
-            var m = new List<byte[]>();
-            int i = 0;
-            var objAlgProv = HashAlgorithmProvider.OpenAlgorithm(HashAlgorithmName.MD5.Name);
-            var objHash = objAlgProv.CreateHash();
-            while (m.Sum(seg => seg.Length) < (keyLen + ivLen))
-            {
-                IBuffer data = null;
-                if (i > 0)
-                {
-                    var lastBuf = m.Last();
-                    data = WindowsRuntimeBuffer.Create(lastBuf.Length + (int)passwordBytes.Length);
-                    lastBuf.CopyTo(data);
-                    data.Length = (uint)lastBuf.Length;
-                }
-                else
-                {
-                    data = WindowsRuntimeBuffer.Create((int)passwordBytes.Length);
-                }
-                passwordBytes.CopyTo(0, data, data.Length, passwordBytes.Length);
-                data.Length += passwordBytes.Length;
-                objHash.Append(data);
-                m.Add(objHash.GetValueAndReset().ToArray());
-                i++;
-            }
-            var ms = m.SelectMany(seg => seg).ToArray();
-            var key = ms.Take(keyLen).ToArray();
-            var iv = ms.Skip(keyLen).Take(ivLen).ToArray();
-            return (key, iv);
-        }
 
         public (byte[] data, uint len) Encrypt (byte[] data, uint len)
         {
             // await encLock.WaitAsync();
             try
             {
-                var outArr = new byte[len];
+                // Reserve for iv
+                var outArr = new byte[len + 16];
                 var outLen = cryptor.Encrypt(data, len, outArr);
                 return (outArr, outLen);
             }
@@ -102,13 +54,11 @@ namespace YtFlow.Tunnel
             }
         }
 
-        public RawShadowsocksAdapter (string srv, int port, string password, TcpSocket socket, TunInterface tun) : base(socket, tun)
+        public ShadowsocksAdapter (string srv, int port, ICryptor _cryptor, TcpSocket socket, TunInterface tun) : base(socket, tun)
         {
             server = srv;
             this.port = port;
-            var (key, _) = EVP_BytesToKey(password, 16, 16);
-            iv = CryptographicBuffer.GenerateRandom(16).ToArray();
-            cryptor = new Test(key, iv);
+            cryptor = _cryptor;
 
             Init();
         }
@@ -119,8 +69,6 @@ namespace YtFlow.Tunnel
             {
                 await r.ConnectAsync(server, port);
                 networkStream = r.GetStream();
-                // networkReadStream = networkStream.AsInputStream();
-                // networkWriteStream = networkStream.AsOutputStream();
             }
             catch (Exception)
             {
@@ -167,15 +115,10 @@ namespace YtFlow.Tunnel
             firstSeg[headerLen - 2] = (byte)(_socket.RemotePort >> 8);
             firstSeg[headerLen - 1] = (byte)(_socket.RemotePort & 0xFF);
             var (encryptedFirstSeg, encryptedFirstSegLen) = Encrypt(firstSeg, (uint)firstSeg.Length);
-            var dataToSend = new byte[encryptedFirstSegLen + iv.Length];
-            Array.Copy(iv, dataToSend, iv.Length);
-            Array.Copy(encryptedFirstSeg, 0, dataToSend, iv.Length, (int)encryptedFirstSegLen);
 
             try
             {
-                // await networkWriteStream.WriteAsync(iv);
-                // await networkWriteStream.WriteAsync(await Encrypt(header));
-                await networkStream.WriteAsync(dataToSend, 0, dataToSend.Length);
+                await networkStream.WriteAsync(encryptedFirstSeg, 0, (int)encryptedFirstSegLen);
                 while (localbuf.TryDequeue(out var buf))
                 {
                     bytesToConfirm += buf.Length;
@@ -309,7 +252,8 @@ namespace YtFlow.Tunnel
             {
                 encLock.Dispose();
                 decLock.Dispose();
-                cryptor?.Dispose();
+                // cryptor?.Dispose();
+                cryptor = null;
                 // networkReadStream?.Dispose();
                 networkStream?.Dispose();
                 r?.Dispose();

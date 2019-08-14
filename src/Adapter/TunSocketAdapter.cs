@@ -118,6 +118,10 @@ namespace YtFlow.Tunnel
             {
                 var readResult = await pipeReader.ReadAsync().ConfigureAwait(false);
                 var buffer = readResult.Buffer;
+                if (buffer.Length == 0)
+                {
+                    break;
+                }
                 ReadOnlySequence<byte> chunk = buffer.Slice(0, Math.Min(buffer.Length, localStackByteCount));
                 var arr = chunk.ToArray();
                 var more = chunk.Length == localStackByteCount;

@@ -121,7 +121,7 @@
     <Compile Include="Adapter\ProxyAdapter.cs" />
     <Compile Include="Adapter\HttpAdapter.cs" />
     <Compile Include="Adapter\TrojanAdapter.cs" />
-    <Compile Include="Adapter\RawShadowsocksAdapter.cs" />
+    <Compile Include="Adapter\ShadowsocksAdapter.cs" />
     <Compile Include="Adapter\TunSocketAdapter.cs" />
     <Compile Include="DNS\DnsProxyServer.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
