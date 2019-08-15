@@ -1,7 +1,5 @@
 ﻿using System;
-using System.Diagnostics;
 using System.Runtime.InteropServices.WindowsRuntime;
-using Windows.ApplicationModel.Background;
 using Windows.Networking;
 using Windows.Networking.Sockets;
 using Windows.Networking.Vpn;
@@ -10,7 +8,6 @@ namespace YtFlow.Tunnel
 {
     sealed class DebugVpnPlugin : IVpnPlugIn
     {
-        public BackgroundTaskDeferral def = null;
         public VpnPluginState State = VpnPluginState.Disconnected;
         private void LogLine(string text, VpnChannel channel)
         {
@@ -108,7 +105,6 @@ namespace YtFlow.Tunnel
                 LogLine(ex.StackTrace, channel);
                 State = VpnPluginState.Disconnected;
             }
-            def?.Complete();
         }
 
         public void Disconnect(VpnChannel channel)
@@ -130,7 +126,6 @@ namespace YtFlow.Tunnel
             LogLine("channel stopped", channel);
             //channel.PlugInContext = null;
             State = VpnPluginState.Disconnected;
-            def?.Complete();
         }
 
         public void GetKeepAlivePayload(VpnChannel channel, out VpnPacketBuffer keepAlivePacket)

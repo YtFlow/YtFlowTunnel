@@ -148,7 +148,8 @@ namespace YtFlow.Tunnel
             TcpSocket.EstablishedTcp -= W_EstablishTcp;
 
             adapters.Clear();
-            dnsServer.Clear();
+            // To avoid problems after reconnecting
+            // dnsServer.Clear();
             dispatchWorker = null;
             running = false;
         }

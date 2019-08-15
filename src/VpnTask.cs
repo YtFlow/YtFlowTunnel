@@ -1,6 +1,4 @@
-﻿using System.Diagnostics;
-using System.Threading;
-using Windows.ApplicationModel.Background;
+﻿using Windows.ApplicationModel.Background;
 using Windows.ApplicationModel.Core;
 using Windows.Networking.Vpn;
 
@@ -8,7 +6,7 @@ namespace YtFlow.Tunnel
 {
     public sealed class VpnTask : IBackgroundTask
     {
-        public static IVpnPlugIn GetPlugin (BackgroundTaskDeferral deferral)
+        public static IVpnPlugIn GetPlugin ()
         {
             var properties = CoreApplication.Properties;
             if (!properties.TryGetValue("plugin", out var plugin))
@@ -16,7 +14,7 @@ namespace YtFlow.Tunnel
 #if true
                 plugin = new DebugVpnPlugin();
 #else
-                plugin = new VpnPlugin(deferral);
+                plugin = new VpnPlugin();
 #endif
                 properties["plugin"] = plugin;
             }
@@ -24,9 +22,7 @@ namespace YtFlow.Tunnel
         }
         public void Run (IBackgroundTaskInstance taskInstance)
         {
-            var deferral = taskInstance.GetDeferral();
-            var plugin = GetPlugin(deferral);
-            VpnChannel.ProcessEventAsync(plugin, taskInstance.TriggerDetails);
+            VpnChannel.ProcessEventAsync(GetPlugin(), taskInstance.TriggerDetails);
         }
     }
 }
