@@ -3,18 +3,19 @@ using System.Runtime.InteropServices.WindowsRuntime;
 using Windows.Networking;
 using Windows.Networking.Sockets;
 using Windows.Networking.Vpn;
+using YtFlow.Tunnel.Config;
 
 namespace YtFlow.Tunnel
 {
     sealed class DebugVpnPlugin : IVpnPlugIn
     {
         public VpnPluginState State = VpnPluginState.Disconnected;
-        private void LogLine(string text, VpnChannel channel)
+        private void LogLine (string text, VpnChannel channel)
         {
             //Debug.WriteLine(text);
             channel.LogDiagnosticMessage(text);
         }
-        public void Connect(VpnChannel channel)
+        public void Connect (VpnChannel channel)
         {
             State = VpnPluginState.Connecting;
             LogLine("Connecting", channel);
@@ -28,8 +29,27 @@ namespace YtFlow.Tunnel
                 {
                     LogLine("Initializing new context", channel);
 #if YT_MOCK
+
                     channel.PlugInContext = context = new DebugVpnContext();
 #else
+                    var configPath = AdapterConfig.GetDefaultConfigFilePath();
+                    if (string.IsNullOrEmpty(configPath))
+                    {
+                        channel.TerminateConnection("Config not set");
+                        return;
+                    }
+                    try
+                    {
+                        var config = AdapterConfig.GetConfigFromFilePath(configPath);
+                        if (config == null)
+                        {
+                            throw new Exception("Cannot read config file.");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        channel.TerminateConnection("Error reading config file:" + ex.Message);
+                    }
                     channel.PlugInContext = context = new DebugVpnContext("9008");
 #endif
                 }
@@ -107,7 +127,7 @@ namespace YtFlow.Tunnel
             }
         }
 
-        public void Disconnect(VpnChannel channel)
+        public void Disconnect (VpnChannel channel)
         {
             State = VpnPluginState.Disconnecting;
             if (channel.PlugInContext == null)
@@ -128,13 +148,13 @@ namespace YtFlow.Tunnel
             State = VpnPluginState.Disconnected;
         }
 
-        public void GetKeepAlivePayload(VpnChannel channel, out VpnPacketBuffer keepAlivePacket)
+        public void GetKeepAlivePayload (VpnChannel channel, out VpnPacketBuffer keepAlivePacket)
         {
             // Not needed
             keepAlivePacket = new VpnPacketBuffer(null, 0, 0);
         }
 
-        public void Encapsulate(VpnChannel channel, VpnPacketBufferList packets, VpnPacketBufferList encapulatedPackets)
+        public void Encapsulate (VpnChannel channel, VpnPacketBufferList packets, VpnPacketBufferList encapulatedPackets)
         {
             while (packets.Size > 0)
             {
@@ -147,7 +167,7 @@ namespace YtFlow.Tunnel
             }
         }
 
-        public void Decapsulate(VpnChannel channel, VpnPacketBuffer encapBuffer, VpnPacketBufferList decapsulatedPackets, VpnPacketBufferList controlPacketsToSend)
+        public void Decapsulate (VpnChannel channel, VpnPacketBuffer encapBuffer, VpnPacketBufferList decapsulatedPackets, VpnPacketBufferList controlPacketsToSend)
         {
             var buf = channel.GetVpnReceivePacketBuffer();
 #if YTLOG_VERBOSE
