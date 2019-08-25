@@ -32,7 +32,7 @@ namespace YtFlow.Tunnel
                 // Reserve for iv
                 var outArr = new byte[len + 16];
                 var outLen = cryptor.Encrypt(data, len, outArr);
-                return (outArr, outLen);
+                return (outArr, (uint)outLen);
             }
             finally
             {
