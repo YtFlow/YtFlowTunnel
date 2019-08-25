@@ -9,6 +9,8 @@ namespace YtFlow.Tunnel
     {
         private DatagramSocket s;
         private TunInterface tun;
+        private readonly string port;
+
         public DebugVpnContext()
         {
 
@@ -16,18 +18,20 @@ namespace YtFlow.Tunnel
         public DebugVpnContext(string port)
         {
             tun = new TunInterface();
+            tun.PacketPoped += Tun_PacketPoped;
+            this.port = port;
+        }
+        public void Init()
+        {
             s = new DatagramSocket();
             s.MessageReceived += S_MessageReceived;
             s.BindEndpointAsync(new HostName("127.0.0.1"), port).AsTask().Wait();
             s.ConnectAsync(new HostName("127.0.0.1"), "9007").AsTask().Wait();
-            tun.PacketPoped += Tun_PacketPoped;
-        }
-        public void Init()
-        {
             tun?.Init();
         }
         public void Stop()
         {
+            s.Dispose();
             tun?.Deinit();
         }
 

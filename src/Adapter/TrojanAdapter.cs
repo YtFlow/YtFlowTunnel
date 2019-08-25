@@ -2,7 +2,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Linq;
-using System.Net.Security;
 using System.Net.Sockets;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
@@ -20,7 +19,8 @@ namespace YtFlow.Tunnel
     {
         private const int RECV_BUFFER_LEN = 1024;
         TcpClient r = new TcpClient(AddressFamily.InterNetwork);
-        SslStream networkStream;
+        // SslStream networkStream;
+        NetworkStream networkStream;
         string server;
         int port;
         private ConcurrentQueue<byte[]> localbuf = new ConcurrentQueue<byte[]>();
@@ -49,8 +49,9 @@ namespace YtFlow.Tunnel
             {
                 await r.ConnectAsync(server, port);
                 // TODO: verify certificate
-                networkStream = new SslStream(r.GetStream(), false, new RemoteCertificateValidationCallback((a, b, c, d) => true));
-                await networkStream.AuthenticateAsClientAsync(server);
+                // TODO: compile first
+                // networkStream = new SslStream(r.GetStream(), false, new RemoteCertificateValidationCallback((a, b, c, d) => true));
+                // await networkStream.AuthenticateAsClientAsync(server);
             }
             catch (Exception)
             {
@@ -60,7 +61,7 @@ namespace YtFlow.Tunnel
                 return;
             }
             Debug.WriteLine("Connected");
-            string domain = DnsProxyServer.Lookup((byte)((_socket.RemoteAddr >> 24 | (0x00FF0000 & _socket.RemoteAddr) >> 8)));
+            string domain = DnsProxyServer.Lookup(_socket.RemoteAddr);
             if (domain == null)
             {
                 Debug.WriteLine("Cannot find DNS record");

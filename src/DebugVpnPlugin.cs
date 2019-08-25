@@ -96,7 +96,6 @@ namespace YtFlow.Tunnel
                 {
                     // DNS servers
                     new HostName("1.1.1.1"),
-                    new HostName("192.168.1.1"),
                 };
                 assignment.DomainNameList.Add(new VpnDomainNameInfo(".", VpnDomainNameType.Suffix, dnsServers, new HostName[] { }));
 
@@ -123,6 +122,7 @@ namespace YtFlow.Tunnel
                 LogLine("Error connecting", channel);
                 LogLine(ex.Message, channel);
                 LogLine(ex.StackTrace, channel);
+                channel.TerminateConnection("Cannot connect to local tunnel");
                 State = VpnPluginState.Disconnected;
             }
         }
@@ -141,7 +141,6 @@ namespace YtFlow.Tunnel
                 LogLine("Disconnecting with non-null context", channel);
             }
             var context = (DebugVpnContext)channel.PlugInContext;
-            channel.Stop();
             context.Stop();
             LogLine("channel stopped", channel);
             //channel.PlugInContext = null;

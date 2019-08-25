@@ -1,20 +1,77 @@
-﻿using DNS.Client;
-using DNS.Protocol;
-using DNS.Protocol.ResourceRecords;
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Linq;
 using System.Runtime.InteropServices.WindowsRuntime;
+using System.Text;
 using System.Threading.Tasks;
 
 namespace YtFlow.Tunnel.DNS
 {
+    internal struct DnsPacket
+    {
+        private byte[] queryPacket;
+        private int queryStart;
+        private int queryEnd;
+        public DnsPacket (byte[] packet)
+        {
+            queryPacket = packet;
+
+            ushort id = (ushort)((packet[0] << 8) | packet[1]);
+            int cursor = 12;
+            queryStart = cursor;
+            byte length = packet[cursor];
+            var sb = new StringBuilder(length * 4);
+            do
+            {
+                sb.Append(Encoding.ASCII.GetString(packet, cursor + 1, length));
+                cursor += 1 + length;
+                length = packet[cursor];
+                if (length > 0)
+                {
+                    sb.Append('.');
+                }
+            }
+            while (length > 0);
+
+            IsARecordQuery = packet[cursor + 2] == 1;
+            queryEnd = cursor + 1;
+            DomainName = sb.ToString();
+        }
+
+        public string DomainName { get; }
+
+        public bool IsARecordQuery { get; }
+
+        public byte[] GenerateErrorResponse (ushort flag)
+        {
+            var queryLen = queryEnd - queryStart;
+            byte[] packet = new byte[queryPacket.Length];
+            queryPacket.CopyTo(packet.AsSpan());
+            packet[2] = (byte)(flag >> 8);
+            packet[3] = (byte)(flag & 0xFF); // Not implemented
+            return packet;
+        }
+
+        public byte[] GenerateAnswerResponse (uint answerIp)
+        {
+            var queryLen = queryEnd - queryStart;
+            byte[] packet = new byte[queryLen * 2 + 30];
+            queryPacket.CopyTo(packet.AsSpan());
+            queryPacket.AsSpan(queryStart, queryLen + 4).CopyTo(packet.AsSpan(queryEnd + 4));
+            packet[2] = 0x80;
+            packet[7] = 0x01; // Answer RRs
+            packet[packet.Length - 5] = 0x04;
+            packet[packet.Length - 4] = (byte)(answerIp >> 24);
+            packet[packet.Length - 3] = (byte)(answerIp >> 16 & 0xFF);
+            packet[packet.Length - 2] = (byte)(answerIp >> 8 & 0xFF);
+            packet[packet.Length - 1] = (byte)(answerIp & 0xFF);
+            return packet;
+        }
+    }
     internal class DnsProxyServer
     {
-        private DnsClient client = new DnsClient("10.68.12.236");
-        private static ConcurrentDictionary<int, string> lookupTable = new ConcurrentDictionary<int, string>();
-        private static ConcurrentDictionary<string, int> rlookupTable = new ConcurrentDictionary<string, int>();
+        private static ConcurrentDictionary<uint, string> lookupTable = new ConcurrentDictionary<uint, string>();
+        private static ConcurrentDictionary<string, uint> rlookupTable = new ConcurrentDictionary<string, uint>();
 
         public void Clear ()
         {
@@ -24,58 +81,40 @@ namespace YtFlow.Tunnel.DNS
         private async Task<byte[]> Query (
             byte[] payload)
         {
-            Request req;
-            req = Request.FromArray(payload);
-            Debug.WriteLine("DNS request: " + req.Questions[0].Name);
-            //var res = await clireq.Resolve();
-            Response res = new Response();
-            byte[] ip = new byte[4] { 172, 17, 0, 0 };
-            res.Id = req.Id;
-            foreach (var q in req.Questions)
+            var dnsPacket = new DnsPacket(payload);
+            var n = dnsPacket.DomainName;
+            if (!dnsPacket.IsARecordQuery)
             {
-                res.Questions.Add(q);
+                return dnsPacket.GenerateErrorResponse(0x8004); // AAAA query not implemented
             }
-            var dom = res.Questions[0].Name.ToString();
-            /*
-            if (res.Questions[0].Name.ToString() != "myip.ipip.net" && res.Questions[0].Name.ToString() != "ip.sb")
+            else if (rlookupTable.TryGetValue(n, out var ipint))
             {
-                try
-                {
-                    var newres = await client.Lookup(res.Questions[0].Name.ToString(), RecordType.A);
-                    var add = newres[0].Address;
-                    return new [] { add & 0xFF, add >> 8, add >> 16, add >> 24 }.Select(i => (byte)i).ToList();
-                }
-                catch (Exception ex)
-                {
-                    ;
-                }
-            }*/
-            string n = req.Questions[0].Name.ToString();
-            if (rlookupTable.TryGetValue(n, out int ipint))
-            {
-                ip[3] = (byte)(ipint & 0xFF);
-                ip[2] = (byte)(0xFF00 & ipint >> 8);
-                ResourceRecord answer = ResourceRecord.FromQuestion(req.Questions[0], ip);
-                res.AnswerRecords.Add(answer);
+                Debug.WriteLine("DNS request done: " + n);
+                return dnsPacket.GenerateAnswerResponse(ipint);
             }
             else
             {
-                int i = lookupTable.Count();
-                lookupTable.TryAdd(i, n);
-                rlookupTable.TryAdd(n, i);
-                ip[3] = (byte)(i & 0xFF);
-                ip[2] = (byte)(0xFF00 & i >> 8);
-                ResourceRecord answer = ResourceRecord.FromQuestion(req.Questions[0], ip);
-                res.AnswerRecords.Add(answer);
+                uint ip = (uint)((172 << 24) | (17 << 16) | lookupTable.Count);
+                while (!lookupTable.TryAdd(ip, n))
+                {
+                    ip = (uint)((172 << 24) | (17 << 16) | lookupTable.Count);
+                }
+                if (!rlookupTable.TryAdd(n, ip))
+                {
+                    return dnsPacket.GenerateErrorResponse(0x8002); // Server failure
+                }
+                Debug.WriteLine("DNS request done: " + n);
+                return dnsPacket.GenerateAnswerResponse(ip);
             }
-            Debug.WriteLine("DNS request done: " + req.Questions[0].Name);
-            //Debug.WriteLine(req);
-            return res.ToArray();
         }
 
-        public static string Lookup (int ip)
+        public static string Lookup (uint ip)
         {
-            lookupTable.TryGetValue(ip, out var ret);
+            uint value = ip << 24
+                | (ip << 8 & 0x00FF0000)
+                | (ip >> 8 & 0x0000FF00)
+                | ip >> 24;
+            lookupTable.TryGetValue(value, out var ret);
             return ret;
         }
 

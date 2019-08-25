@@ -35,7 +35,7 @@ namespace YtFlow.Tunnel
         {
             var connectTask = r.ConnectAsync(server, port);
             Debug.WriteLine("Connected");
-            string domain = DnsProxyServer.Lookup((byte)((_socket.RemoteAddr >> 24 | (0x00FF0000 & _socket.RemoteAddr) >> 8)));
+            string domain = DnsProxyServer.Lookup(_socket.RemoteAddr);
             if (domain == null)
             {
                 Debug.WriteLine("Cannot find DNS record");

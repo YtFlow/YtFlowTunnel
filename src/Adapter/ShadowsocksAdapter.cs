@@ -88,7 +88,7 @@ namespace YtFlow.Tunnel
             header[5] = (byte)(_socket.RemotePort >> 8);
             header[6] = (byte)(_socket.RemotePort & 0xFF);
             */
-            string domain = DnsProxyServer.Lookup((byte)((_socket.RemoteAddr >> 24 | (0x00FF0000 & _socket.RemoteAddr) >> 8)));
+            string domain = DnsProxyServer.Lookup(_socket.RemoteAddr);
             if (domain == null)
             {
                 Debug.WriteLine("Cannot find DNS record");

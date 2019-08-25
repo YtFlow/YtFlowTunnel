@@ -1,7 +1,5 @@
 ﻿using System;
-using System.Runtime.InteropServices.WindowsRuntime;
 using System.Threading.Tasks;
-using Windows.Storage.Streams;
 using Wintun2socks;
 
 namespace YtFlow.Tunnel
@@ -41,6 +39,7 @@ namespace YtFlow.Tunnel
 
         private void ProxyAdapter_OnError (object sender, int err)
         {
+            LocalDisconnected = true;
             // Close();
             DisconnectRemote();
         }

@@ -184,15 +184,14 @@ namespace YtFlow.Tunnel
 
         public virtual void Close ()
         {
-            // _tun.executeLwipTask(() => _socket.Close());
-            LocalDisconnecting = true;
+            LocalDisconnecting = LocalDisconnected = true;
             pipeWriter.Complete();
         }
 
         public virtual void Reset ()
         {
             LocalDisconnecting = LocalDisconnected = true;
-            _tun.executeLwipTask(() => _socket.Abort());
+            OnError.Invoke(this, 1);
             CheckShutdown();
         }
 
