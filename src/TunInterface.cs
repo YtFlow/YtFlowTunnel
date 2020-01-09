@@ -94,12 +94,14 @@ namespace YtFlow.Tunnel
 #endif
                     act();
 #if YTLOG_VERBOSE
-                        Debug.WriteLine($"{dispatchWorks.Count} tasks remain {sw.ElapsedMilliseconds}");
+                        //Debug.WriteLine($"{dispatchWorks.Count} tasks remain {sw.ElapsedMilliseconds}");
 #endif
                 }//).Wait(2000);
-                catch (Exception)
+                catch (Exception e)
                 {
-                    await Task.Delay(10);
+                    // await Task.Delay(10);
+                    DebugLogger.Log(e.Message);
+                    DebugLogger.Log(e.StackTrace);
                 }
                 // dispatchWaitHandle.WaitOne();
             }
@@ -135,6 +137,7 @@ namespace YtFlow.Tunnel
             {
                 return;
             }
+            DebugLogger.Log("Tun deinit req");
             foreach (var adapter in adapters.Where(a => !a.IsShutdown))
             {
                 try

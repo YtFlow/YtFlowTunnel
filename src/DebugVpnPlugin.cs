@@ -10,61 +10,69 @@ namespace YtFlow.Tunnel
     sealed class DebugVpnPlugin : IVpnPlugIn
     {
         public VpnPluginState State = VpnPluginState.Disconnected;
+        private VpnChannel cachedChannelForLogging;
         private void LogLine (string text, VpnChannel channel)
         {
             //Debug.WriteLine(text);
             channel.LogDiagnosticMessage(text);
+            cachedChannelForLogging = channel;
+        }
+        public void TryLogLine (string text)
+        {
+            cachedChannelForLogging?.LogDiagnosticMessage(text);
         }
         public void Connect (VpnChannel channel)
         {
+            if (State != VpnPluginState.Disconnected)
+            {
+                LogLine("Attempted to connect at wrong state: " + State.ToString(), channel);
+                return;
+            }
             State = VpnPluginState.Connecting;
             LogLine("Connecting", channel);
+            DebugLogger.Logger = (s) => cachedChannelForLogging.LogDiagnosticMessage(s);
             try
             {
                 var transport = new DatagramSocket();
                 channel.AssociateTransport(transport, null);
 
-                DebugVpnContext context = null;
-                if (channel.PlugInContext == null)
+                DebugVpnContext context = VpnTask.GetContext();
+                LogLine("Initializing context", channel);
+#if !YT_MOCK
+                var configPath = AdapterConfig.GetDefaultConfigFilePath();
+                if (string.IsNullOrEmpty(configPath))
                 {
-                    LogLine("Initializing new context", channel);
-#if YT_MOCK
-
-                    channel.PlugInContext = context = new DebugVpnContext();
-#else
-                    var configPath = AdapterConfig.GetDefaultConfigFilePath();
-                    if (string.IsNullOrEmpty(configPath))
+                    channel.TerminateConnection("Config not set");
+                    return;
+                }
+                try
+                {
+                    var config = AdapterConfig.GetConfigFromFilePath(configPath);
+                    if (config == null)
                     {
-                        channel.TerminateConnection("Config not set");
-                        return;
+                        throw new Exception("Cannot read config file.");
                     }
-                    try
-                    {
-                        var config = AdapterConfig.GetConfigFromFilePath(configPath);
-                        if (config == null)
-                        {
-                            throw new Exception("Cannot read config file.");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        channel.TerminateConnection("Error reading config file:" + ex.Message);
-                    }
-                    channel.PlugInContext = context = new DebugVpnContext("9008");
+                }
+                catch (Exception ex)
+                {
+                    channel.TerminateConnection("Error reading config file:" + ex.Message);
+                    return;
+                }
 #endif
-                }
-                else
-                {
-                    LogLine("Context exists", channel);
-                    context = (DebugVpnContext)channel.PlugInContext;
-                }
                 transport.BindEndpointAsync(new HostName("127.0.0.1"), "9007").AsTask().ContinueWith(t =>
                 {
-                    LogLine("Binded", channel);
+                    if (t.IsCompleted)
+                    {
+                        LogLine("Binded", channel);
+                    }
+                    else if (t.IsFaulted)
+                    {
+                        channel.LogDiagnosticMessage("Error binding:");
+                        channel.LogDiagnosticMessage(t.Exception.Message);
+                        channel.LogDiagnosticMessage(t.Exception.StackTrace);
+                    }
                 }).Wait();
-#if !YT_MOCK
                 context.Init();
-#endif
                 /* var rport = context.Init(transport.Information.LocalPort, str =>
                 {
                     LogLine(str, channel);
@@ -73,7 +81,16 @@ namespace YtFlow.Tunnel
                 var rport = "9008";
                 transport.ConnectAsync(new HostName("127.0.0.1"), rport).AsTask().ContinueWith(t =>
                 {
-                    LogLine("r Connected", channel);
+                    if (t.IsCompleted)
+                    {
+                        LogLine("r Connected", channel);
+                    }
+                    else if (t.IsFaulted)
+                    {
+                        channel.LogDiagnosticMessage("Error connecting r:");
+                        channel.LogDiagnosticMessage(t.Exception.Message);
+                        channel.LogDiagnosticMessage(t.Exception.StackTrace);
+                    }
                 });
 
                 VpnRouteAssignment routeScope = new VpnRouteAssignment()
@@ -129,60 +146,81 @@ namespace YtFlow.Tunnel
 
         public void Disconnect (VpnChannel channel)
         {
-            State = VpnPluginState.Disconnecting;
-            if (channel.PlugInContext == null)
+            try
             {
-                LogLine("Disconnecting with null context", channel);
+                State = VpnPluginState.Disconnecting;
+                LogLine("Stopping channel", channel);
+                channel.Stop();
+                LogLine("Disconnecting context", channel);
+                VpnTask.GetContext()?.Stop();
+                LogLine("Disconnected", channel);
+            }
+            catch (Exception ex)
+            {
+                LogLine(ex.Message, channel);
+                LogLine(ex.StackTrace, channel);
+            }
+            finally
+            {
                 State = VpnPluginState.Disconnected;
-                return;
+                VpnTask.ClearPlugin();
+                VpnTask.ClearContext();
+                VpnTask.deferral?.Complete();
+                VpnTask.deferral = null;
             }
-            else
-            {
-                LogLine("Disconnecting with non-null context", channel);
-            }
-            var context = (DebugVpnContext)channel.PlugInContext;
-            context.Stop();
-            LogLine("channel stopped", channel);
-            //channel.PlugInContext = null;
-            State = VpnPluginState.Disconnected;
         }
 
         public void GetKeepAlivePayload (VpnChannel channel, out VpnPacketBuffer keepAlivePacket)
         {
-            // Not needed
+            //// Not needed
             keepAlivePacket = new VpnPacketBuffer(null, 0, 0);
         }
 
         public void Encapsulate (VpnChannel channel, VpnPacketBufferList packets, VpnPacketBufferList encapulatedPackets)
         {
-            while (packets.Size > 0)
+            try
             {
+                while (packets.Size > 0)
+                {
 #if YTLOG_VERBOSE
-                LogLine("Encapsulating " + packets.Size.ToString(), channel);
+                    LogLine("Encapsulating " + packets.Size.ToString(), channel);
 #endif
-                var packet = packets.RemoveAtBegin();
-                encapulatedPackets.Append(packet);
-                //LogLine("Encapsulated one packet", channel);
+                    var packet = packets.RemoveAtBegin();
+                    encapulatedPackets.Append(packet);
+                    //LogLine("Encapsulated one packet", channel);
+                }
+            }
+            catch (Exception ex)
+            {
+                LogLine(ex.Message, channel);
             }
         }
 
         public void Decapsulate (VpnChannel channel, VpnPacketBuffer encapBuffer, VpnPacketBufferList decapsulatedPackets, VpnPacketBufferList controlPacketsToSend)
         {
-            var buf = channel.GetVpnReceivePacketBuffer();
-#if YTLOG_VERBOSE
-            LogLine("Decapsulating one packet", channel);
-#endif
-            if (encapBuffer.Buffer.Length > buf.Buffer.Capacity)
+            try
             {
-                LogLine("Dropped one packet", channel);
-                //Drop larger packets.
-                return;
-            }
+                var buf = channel.GetVpnReceivePacketBuffer();
+#if YTLOG_VERBOSE
+                LogLine("Decapsulating one packet", channel);
+#endif
+                if (encapBuffer.Buffer.Length > buf.Buffer.Capacity)
+                {
+                    LogLine("Dropped one packet", channel);
+                    //Drop larger packets.
+                    return;
+                }
 
-            encapBuffer.Buffer.CopyTo(buf.Buffer);
-            buf.Buffer.Length = encapBuffer.Buffer.Length;
-            decapsulatedPackets.Append(buf);
-            // LogLine("Decapsulated one packet", channel);
+                encapBuffer.Buffer.CopyTo(buf.Buffer);
+                buf.Buffer.Length = encapBuffer.Buffer.Length;
+                decapsulatedPackets.Append(buf);
+                // LogLine("Decapsulated one packet", channel);
+            }
+            catch (Exception ex)
+            {
+                LogLine(ex.Message, channel);
+                LogLine(ex.StackTrace, channel);
+            }
 
         }
     }

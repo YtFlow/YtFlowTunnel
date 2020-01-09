@@ -1,4 +1,6 @@
 ﻿using System;
+using System.Net;
+using System.Net.Sockets;
 using System.Runtime.InteropServices.WindowsRuntime;
 using Windows.Networking;
 using Windows.Networking.Sockets;
@@ -7,40 +9,63 @@ namespace YtFlow.Tunnel
 {
     internal class DebugVpnContext
     {
-        private DatagramSocket s;
+        // private DatagramSocket s;
+        private UdpClient u;
         private TunInterface tun;
         private readonly string port;
 
-        public DebugVpnContext()
+        public DebugVpnContext () : this("9008")
         {
 
         }
-        public DebugVpnContext(string port)
+        public DebugVpnContext (string port)
         {
+#if !YT_MOCK
             tun = new TunInterface();
             tun.PacketPoped += Tun_PacketPoped;
             this.port = port;
+#endif
         }
-        public void Init()
+        public void Init ()
         {
-            s = new DatagramSocket();
-            s.MessageReceived += S_MessageReceived;
-            s.BindEndpointAsync(new HostName("127.0.0.1"), port).AsTask().Wait();
-            s.ConnectAsync(new HostName("127.0.0.1"), "9007").AsTask().Wait();
+#if !YT_MOCK
+            u = new UdpClient(int.Parse(port));
+            // s = new DatagramSocket();
+            // s.MessageReceived += S_MessageReceived;
+            // s.BindEndpointAsync(new HostName("127.0.0.1"), port).AsTask().Wait();
+            // s.ConnectAsync(new HostName("127.0.0.1"), "9007").AsTask().Wait();
             tun?.Init();
+            StartRecv();
+#endif
         }
-        public void Stop()
+        private async void StartRecv ()
         {
-            s.Dispose();
+            while (u != null)
+            {
+                try
+                {
+                    var recv = await u.ReceiveAsync();
+                    tun?.PushPacket(recv.Buffer);
+                }
+                catch (Exception) { break; }
+            }
+        }
+        public void Stop ()
+        {
+            // s.Dispose();
+            u?.Dispose();
+            u = null;
             tun?.Deinit();
         }
 
-        private void Tun_PacketPoped(object sender, byte[] e)
+        private IPEndPoint pluginEndpoint = new IPEndPoint(new IPAddress(new byte[] { 127, 0, 0, 1 }), 9007);
+        private async void Tun_PacketPoped (object sender, byte[] e)
         {
-            var _ = s.OutputStream.WriteAsync(e.AsBuffer());
+            // var _ = s.OutputStream.WriteAsync(e.AsBuffer());
+            await u.SendAsync(e, e.Length, pluginEndpoint);
         }
 
-        private void S_MessageReceived(DatagramSocket sender, DatagramSocketMessageReceivedEventArgs args)
+        private void S_MessageReceived (DatagramSocket sender, DatagramSocketMessageReceivedEventArgs args)
         {
             var remotePort = args.RemotePort;
             var reader = args.GetDataReader();

@@ -41,7 +41,11 @@ namespace YtFlow.Tunnel
         {
             LocalDisconnected = true;
             // Close();
-            DisconnectRemote();
+            if (!RemoteDisconnected)
+            {
+                DebugLogger.Log("OnError " + err.ToString());
+                DisconnectRemote();
+            }
         }
 
         protected override void CheckShutdown ()
