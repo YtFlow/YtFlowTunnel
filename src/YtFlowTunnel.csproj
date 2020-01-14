@@ -143,8 +143,8 @@
     <EmbeddedResource Include="Properties\YtFlowTunnel.rd.xml" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\Wintun2socks\src\wintun2socks.vcxproj">
-      <Project>{d782a42f-f6fe-41c8-801b-4876e9e493f8}</Project>
+    <ProjectReference Include="..\..\wintun2socks\src\wintun2socks.vcxproj">
+      <Project>{354c56b0-57a7-42c8-ba52-baa188c861e5}</Project>
       <Name>wintun2socks</Name>
     </ProjectReference>
     <ProjectReference Include="..\..\YtCrypto\src\YtCrypto.vcxproj">
@@ -163,7 +163,6 @@
       <Version>4.5.0</Version>
     </PackageReference>
   </ItemGroup>
-  <ItemGroup />
   <PropertyGroup Condition=" '$(VisualStudioVersion)' == '' or '$(VisualStudioVersion)' &lt; '14.0' ">
     <VisualStudioVersion>14.0</VisualStudioVersion>
   </PropertyGroup>

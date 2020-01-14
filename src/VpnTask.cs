@@ -1,4 +1,5 @@
-﻿using Windows.ApplicationModel.Background;
+﻿using System;
+using Windows.ApplicationModel.Background;
 using Windows.ApplicationModel.Core;
 using Windows.Networking.Vpn;
 
@@ -24,13 +25,10 @@ namespace YtFlow.Tunnel
         internal static DebugVpnContext GetContext () => GetSharedObject<DebugVpnContext>("context");
         internal static void ClearPlugin() => ClearSharedObject("plugin");
         internal static void ClearContext() => ClearSharedObject("context");
-        internal static BackgroundTaskDeferral deferral;
         public void Run (IBackgroundTaskInstance taskInstance)
         {
-            deferral?.Complete();
-            deferral = null;
-            // deferral = taskInstance.GetDeferral();
-            VpnChannel.ProcessEventAsync(GetPlugin(), taskInstance.TriggerDetails);
+            var plugin = GetPlugin();
+            VpnChannel.ProcessEventAsync(plugin, taskInstance.TriggerDetails);
         }
     }
 }

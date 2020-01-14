@@ -165,8 +165,6 @@ namespace YtFlow.Tunnel
                 State = VpnPluginState.Disconnected;
                 VpnTask.ClearPlugin();
                 VpnTask.ClearContext();
-                VpnTask.deferral?.Complete();
-                VpnTask.deferral = null;
             }
         }
 
