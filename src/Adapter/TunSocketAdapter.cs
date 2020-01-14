@@ -86,7 +86,7 @@ namespace YtFlow.Tunnel
             }
             if (writeResult != 0)
             {
-                DebugLogger.Log("Error from writing:");
+                DebugLogger.Log("Error from writing:" + writeResult.ToString());
                 OnError?.Invoke(this, writeResult);
                 pipeReader.Complete();
                 return false;
