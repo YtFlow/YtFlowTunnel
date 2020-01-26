@@ -5,6 +5,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Windows.ApplicationModel.Core;
 using Wintun2socks;
 using YtCrypto;
 using YtFlow.Tunnel.DNS;
@@ -162,8 +163,7 @@ namespace YtFlow.Tunnel
                 catch (ObjectDisposedException) { }
                 catch (Exception ex)
                 {
-                    DebugLogger.Log(domain + ex.Message);
-                    DebugLogger.Log(domain + ex.StackTrace);
+                    DebugLogger.Log(domain + ex.ToString());
                     break;
                 }
             }
@@ -239,8 +239,7 @@ namespace YtFlow.Tunnel
                 catch (Exception ex)
                 {
                     Debug.WriteLine("Cannot send to remote");
-                    DebugLogger.Log(domain + ex.Message);
-                    DebugLogger.Log(domain + ex.StackTrace);
+                    DebugLogger.Log(domain + ex.ToString());
                 }
             }
             else

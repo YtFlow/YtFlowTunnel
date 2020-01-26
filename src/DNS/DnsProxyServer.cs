@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Concurrent;
-using System.Diagnostics;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
 using System.Threading.Tasks;
@@ -89,7 +88,7 @@ namespace YtFlow.Tunnel.DNS
             }
             else if (rlookupTable.TryGetValue(n, out var ipint))
             {
-                Debug.WriteLine("DNS request done: " + n);
+                DebugLogger.Log("DNS request done: " + n);
                 return dnsPacket.GenerateAnswerResponse(ipint);
             }
             else
@@ -103,7 +102,7 @@ namespace YtFlow.Tunnel.DNS
                 {
                     return dnsPacket.GenerateErrorResponse(0x8002); // Server failure
                 }
-                Debug.WriteLine("DNS request done: " + n);
+                DebugLogger.Log("DNS request done: " + n);
                 return dnsPacket.GenerateAnswerResponse(ip);
             }
         }

@@ -53,11 +53,16 @@ namespace YtFlow.Tunnel.Config
         }
         public static string GetDefaultConfigFilePath ()
         {
-            return ApplicationData.Current.LocalSettings.Values[DEFAULT_CONFIG_PATH_KEY] as string;
+            ApplicationData.Current.LocalSettings.Values.TryGetValue(DEFAULT_CONFIG_PATH_KEY, out var ret);
+            return ret as string;
         }
         public static void SetDefaultConfigFilePath (string configFilePath)
         {
             ApplicationData.Current.LocalSettings.Values[DEFAULT_CONFIG_PATH_KEY] = configFilePath;
+        }
+        public static void ClearDefaultConfigFilePath ()
+        {
+            ApplicationData.Current.LocalSettings.Values.Remove(DEFAULT_CONFIG_PATH_KEY);
         }
 
         public void SaveToFile (string filePath)

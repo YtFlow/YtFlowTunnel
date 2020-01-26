@@ -1,7 +1,4 @@
-﻿using System.Threading.Tasks;
-using Windows.Storage.Streams;
-
-namespace YtFlow.Tunnel
+﻿namespace YtFlow.Tunnel
 {
     internal delegate void ReadDataHandler(object sender, byte[] e);
     internal delegate void SocketErrorHandler(object sender, int err);

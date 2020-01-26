@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Runtime.InteropServices.WindowsRuntime;
+using System.Text;
 using Windows.Networking;
 using Windows.Networking.Sockets;
 using Windows.Networking.Vpn;
@@ -10,39 +11,26 @@ namespace YtFlow.Tunnel
     sealed class DebugVpnPlugin : IVpnPlugIn
     {
         public VpnPluginState State = VpnPluginState.Disconnected;
-        private VpnChannel cachedChannelForLogging;
-        private void LogLine (string text, VpnChannel channel)
-        {
-            //Debug.WriteLine(text);
-            channel.LogDiagnosticMessage(text);
-            cachedChannelForLogging = channel;
-        }
-        public void TryLogLine (string text)
-        {
-            cachedChannelForLogging?.LogDiagnosticMessage(text);
-        }
         public void Connect (VpnChannel channel)
         {
-            if (State != VpnPluginState.Disconnected)
-            {
-                LogLine("Attempted to connect at wrong state: " + State.ToString(), channel);
-                return;
-            }
             State = VpnPluginState.Connecting;
-            LogLine("Connecting", channel);
-            DebugLogger.Logger = (s) => cachedChannelForLogging.LogDiagnosticMessage(s);
+            DebugLogger.Logger = s =>
+            {
+                channel.LogDiagnosticMessage(s);
+            };
+            DebugLogger.Log("Starting connection to VPN tunnel");
             try
             {
                 var transport = new DatagramSocket();
                 channel.AssociateTransport(transport, null);
 
                 DebugVpnContext context = VpnTask.GetContext();
-                LogLine("Initializing context", channel);
+                DebugLogger.Log("Initializing context");
 #if !YT_MOCK
                 var configPath = AdapterConfig.GetDefaultConfigFilePath();
                 if (string.IsNullOrEmpty(configPath))
                 {
-                    channel.TerminateConnection("Config not set");
+                    channel.TerminateConnection("Default server configuration not set. Please launch YtFlow app and select a server configuration as default.");
                     return;
                 }
                 try
@@ -50,48 +38,60 @@ namespace YtFlow.Tunnel
                     var config = AdapterConfig.GetConfigFromFilePath(configPath);
                     if (config == null)
                     {
-                        throw new Exception("Cannot read config file.");
+                        channel.TerminateConnection("Could not read server configuration.");
+                        return;
                     }
                 }
                 catch (Exception ex)
                 {
-                    channel.TerminateConnection("Error reading config file:" + ex.Message);
+                    channel.TerminateConnection("Error reading server configuration: " + ex.ToString());
                     return;
                 }
 #endif
-                transport.BindEndpointAsync(new HostName("127.0.0.1"), "9007").AsTask().ContinueWith(t =>
+                DebugLogger.Log("Config read, binding endpoint");
+                if (!transport.BindEndpointAsync(new HostName("127.0.0.1"), "9007").AsTask().ContinueWith(t =>
                 {
                     if (t.IsCompleted)
                     {
-                        LogLine("Binded", channel);
+                        DebugLogger.Log("Binded");
+                        return true;
                     }
                     else if (t.IsFaulted)
                     {
-                        channel.LogDiagnosticMessage("Error binding:");
-                        channel.LogDiagnosticMessage(t.Exception.Message);
-                        channel.LogDiagnosticMessage(t.Exception.StackTrace);
+                        DebugLogger.Log("Error binding endpoint: " + t.Exception.ToString());
                     }
-                }).Wait();
+                    return false;
+                }).Result)
+                {
+                    return;
+                }
+                DebugLogger.Log("Endpoint binded, init context");
                 context.Init();
+                DebugLogger.Log("Context initialized");
                 /* var rport = context.Init(transport.Information.LocalPort, str =>
                 {
                     LogLine(str, channel);
                     return null;
                 }); */
                 var rport = "9008";
-                transport.ConnectAsync(new HostName("127.0.0.1"), rport).AsTask().ContinueWith(t =>
+                DebugLogger.Log("Connecting to local packet processor");
+                if (!transport.ConnectAsync(new HostName("127.0.0.1"), rport).AsTask().ContinueWith(t =>
                 {
                     if (t.IsCompleted)
                     {
-                        LogLine("r Connected", channel);
+                        DebugLogger.Log("Local packet processor connected");
+                        return true;
                     }
                     else if (t.IsFaulted)
                     {
-                        channel.LogDiagnosticMessage("Error connecting r:");
-                        channel.LogDiagnosticMessage(t.Exception.Message);
-                        channel.LogDiagnosticMessage(t.Exception.StackTrace);
+                        channel.TerminateConnection("Error connecting to local packet processor: " + t.Exception.ToString());
                     }
-                });
+                    return false;
+                }).Result)
+                {
+                    return;
+                }
+                DebugLogger.Log("Connected to local packet processor");
 
                 VpnRouteAssignment routeScope = new VpnRouteAssignment()
                 {
@@ -117,7 +117,7 @@ namespace YtFlow.Tunnel
                 assignment.DomainNameList.Add(new VpnDomainNameInfo(".", VpnDomainNameType.Suffix, dnsServers, new HostName[] { }));
 
                 var now = DateTime.Now;
-                LogLine("Starting transport", channel);
+                DebugLogger.Log("Starting transport");
                 channel.StartWithMainTransport(
                 new[] { new HostName("192.168.3.1") },
                 null,
@@ -130,16 +130,12 @@ namespace YtFlow.Tunnel
                 transport
                 );
                 var delta = DateTime.Now - now;
-                LogLine($"Finished starting transport in {delta.TotalMilliseconds} ms.", channel);
-                LogLine("Connected", channel);
+                DebugLogger.Log($"Transport started in {delta.TotalMilliseconds} ms.");
                 State = VpnPluginState.Connected;
             }
             catch (Exception ex)
             {
-                LogLine("Error connecting", channel);
-                LogLine(ex.Message, channel);
-                LogLine(ex.StackTrace, channel);
-                channel.TerminateConnection("Cannot connect to local tunnel");
+                channel.TerminateConnection("Error connecting to VPN tunnel: " + ex.ToString());
                 State = VpnPluginState.Disconnected;
             }
         }
@@ -149,22 +145,20 @@ namespace YtFlow.Tunnel
             try
             {
                 State = VpnPluginState.Disconnecting;
-                LogLine("Stopping channel", channel);
+                DebugLogger.Log("Stopping channel");
                 channel.Stop();
-                LogLine("Disconnecting context", channel);
+                DebugLogger.Log("Stopping context");
                 VpnTask.GetContext()?.Stop();
-                LogLine("Disconnected", channel);
+                DebugLogger.Log("Context stopped");
             }
             catch (Exception ex)
             {
-                LogLine(ex.Message, channel);
-                LogLine(ex.StackTrace, channel);
+                DebugLogger.Log("Error disconnecting: " + ex.ToString());
             }
             finally
             {
                 State = VpnPluginState.Disconnected;
-                VpnTask.ClearPlugin();
-                VpnTask.ClearContext();
+                var _ = DebugLogger.ResetLoggers();
             }
         }
 
@@ -190,7 +184,7 @@ namespace YtFlow.Tunnel
             }
             catch (Exception ex)
             {
-                LogLine(ex.Message, channel);
+                DebugLogger.Log("Error encapsulating packets: " + ex.ToString());
             }
         }
 
@@ -204,8 +198,8 @@ namespace YtFlow.Tunnel
 #endif
                 if (encapBuffer.Buffer.Length > buf.Buffer.Capacity)
                 {
-                    LogLine("Dropped one packet", channel);
                     //Drop larger packets.
+                    DebugLogger.Log("Dropped an oversized packet");
                     return;
                 }
 
@@ -216,10 +210,8 @@ namespace YtFlow.Tunnel
             }
             catch (Exception ex)
             {
-                LogLine(ex.Message, channel);
-                LogLine(ex.StackTrace, channel);
+                DebugLogger.Log("Error decapsulating packets: " + ex.ToString());
             }
-
         }
     }
 

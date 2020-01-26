@@ -1,16 +1,14 @@
 ﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Windows.Networking;
 using Windows.Networking.Sockets;
-using Windows.UI.Core;
 using Wintun2socks;
-using YtCrypto;
 using YtFlow.Tunnel.Adapter.Factory;
 using YtFlow.Tunnel.Config;
 using YtFlow.Tunnel.DNS;
@@ -29,7 +27,6 @@ namespace YtFlow.Tunnel
         Wintun w = Wintun.Instance;
         DnsProxyServer dnsServer = new DnsProxyServer();
         bool running = false;
-
         public event PacketPopedHandler PacketPoped;
 
         internal void executeLwipTask (Action act)
@@ -121,14 +118,24 @@ namespace YtFlow.Tunnel
             TcpSocket.EstablishedTcp += W_EstablishTcp;
 
             w.Init();
+            int i = 0;
             while (running)
             {
-                await Task.Delay(250);
+                i++;
                 await executeLwipTask(() =>
                 {
                     w.CheckTimeout();
                     return 0;
                 });
+                await Task.Delay(250);
+                if (i % 10 == 0)
+                {
+                    try
+                    {
+                        DebugLogger.Log("lwIP watchdog running: " + i.ToString());
+                    }
+                    catch (Exception) { }
+                }
             }
         }
         public async void Deinit ()
@@ -158,6 +165,8 @@ namespace YtFlow.Tunnel
             // dnsServer.Clear();
             dispatchWorker = null;
             running = false;
+            // debugSocket?.Dispose();
+            // debugSocket = null;
         }
 
         private async void W_DnsPacketPoped (object sender, byte[] e, uint addr, ushort port)
@@ -188,12 +197,21 @@ namespace YtFlow.Tunnel
         private void W_PopPacket (object sender, byte[] e)
         {
             PacketPoped?.Invoke(sender, e);
+            var _ = DebugLogger.LogPacketWithTimestamp(e);
         }
 
-        public void PushPacket ([ReadOnlyArray] byte[] packet)
+        public async void PushPacket ([ReadOnlyArray] byte[] packet)
         {
             /*if (dispatchQ.Count < 100)*/
-            executeLwipTask(() => w.PushPacket(packet));
+            byte ret = await executeLwipTask(() => w.PushPacket(packet));
+            if (ret == 0)
+            {
+                var _ = DebugLogger.LogPacketWithTimestamp(packet);
+            }
+            else
+            {
+                DebugLogger.Logger($"Push packet of size {packet.Length} with result: {ret}");
+            }
         }
 
         public uint ConnectionCount { get => TcpSocket.ConnectionCount(); }

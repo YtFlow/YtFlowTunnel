@@ -1,8 +1,6 @@
 ﻿using System;
 using System.Net;
 using System.Net.Sockets;
-using System.Runtime.InteropServices.WindowsRuntime;
-using Windows.Networking;
 using Windows.Networking.Sockets;
 
 namespace YtFlow.Tunnel
@@ -62,12 +60,11 @@ namespace YtFlow.Tunnel
         private async void Tun_PacketPoped (object sender, byte[] e)
         {
             // var _ = s.OutputStream.WriteAsync(e.AsBuffer());
-            await u.SendAsync(e, e.Length, pluginEndpoint);
+            await u?.SendAsync(e, e.Length, pluginEndpoint);
         }
 
         private void S_MessageReceived (DatagramSocket sender, DatagramSocketMessageReceivedEventArgs args)
         {
-            var remotePort = args.RemotePort;
             var reader = args.GetDataReader();
             byte[] b = new byte[reader.UnconsumedBufferLength];
             reader.ReadBytes(b);

@@ -3,7 +3,6 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net.Sockets;
 using System.Text;
-using System.Threading;
 using Wintun2socks;
 using YtFlow.Tunnel.DNS;
 
