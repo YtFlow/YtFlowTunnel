@@ -33,12 +33,11 @@ namespace YtFlow.Tunnel
         public async void Init ()
         {
             var connectTask = r.ConnectAsync(server, port);
-            Debug.WriteLine("Connected");
             string domain = DnsProxyServer.Lookup(_socket.RemoteAddr);
             if (domain == null)
             {
                 Debug.WriteLine("Cannot find DNS record");
-                DisconnectRemote();
+                FinishSendToRemote();
                 Reset();
                 return;
             }
@@ -56,6 +55,7 @@ namespace YtFlow.Tunnel
             try
             {
                 await connectTask;
+                Debug.WriteLine("Connected");
                 networkStream = r.GetStream();
                 await networkStream.WriteAsync(firstSeg, 0, headerLen);
                 byte[] responseBuf = new byte[RECV_BUFFER_LEN];
@@ -102,7 +102,7 @@ namespace YtFlow.Tunnel
                 }
                 else
                 {
-                    await RemoteReceived(responseBuf.AsMemory(headerStart, responseLen));
+                    await RemoteReceived(responseBuf.AsSpan(headerStart, responseLen));
                 }
 
                 int bytesToConfirm = 0;
@@ -123,7 +123,7 @@ namespace YtFlow.Tunnel
             catch (Exception ex)
             {
                 Debug.WriteLine("Error sending header to remote" + ex.Message);
-                DisconnectRemote();
+                FinishSendToRemote();
                 Reset();
                 return;
             }
@@ -143,7 +143,7 @@ namespace YtFlow.Tunnel
                     Debug.WriteLine($"Received {len} bytes");
 #endif
 
-                    await RemoteReceived(remotebuf.AsMemory(0, len));
+                    await RemoteReceived(remotebuf.AsSpan(0, len));
                 }
                 catch (Exception)
                 {
@@ -161,13 +161,8 @@ namespace YtFlow.Tunnel
             catch (Exception) { }
         }
 
-        protected override async void DisconnectRemote ()
+        protected override async void FinishSendToRemote (Exception ex = null)
         {
-            if (RemoteDisconnecting)
-            {
-                return;
-            }
-            RemoteDisconnecting = true;
             try
             {
                 if (!localbuf.IsEmpty)
@@ -235,11 +230,8 @@ namespace YtFlow.Tunnel
 
         protected override void CheckShutdown ()
         {
-            if (IsShutdown)
-            {
-                networkStream?.Dispose();
-                r?.Dispose();
-            }
+            networkStream?.Dispose();
+            r?.Dispose();
             base.CheckShutdown();
         }
     }

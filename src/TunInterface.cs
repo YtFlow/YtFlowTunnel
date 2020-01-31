@@ -1,13 +1,10 @@
 ﻿using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices.WindowsRuntime;
-using System.Text;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
-using Windows.Networking;
-using Windows.Networking.Sockets;
 using Wintun2socks;
 using YtFlow.Tunnel.Adapter.Factory;
 using YtFlow.Tunnel.Config;
@@ -18,36 +15,22 @@ namespace YtFlow.Tunnel
     public delegate void PacketPopedHandler (object sender, [ReadOnlyArray] byte[] e);
     public sealed class TunInterface
     {
-        ConcurrentQueue<Action> dispatchQ = new ConcurrentQueue<Action>();
-        SemaphoreSlim dispatchLocker = new SemaphoreSlim(1, 100);
-        // BlockingCollection<Action> dispatchWorks = new BlockingCollection<Action>();
-        Task dispatchWorker;
-        // EventWaitHandle dispatchWaitHandle = new EventWaitHandle(false, EventResetMode.AutoReset);
-        List<TunSocketAdapter> adapters = new List<TunSocketAdapter>();
+        Channel<Action> taskChannel;
+        List<WeakReference<TunSocketAdapter>> adapters = new List<WeakReference<TunSocketAdapter>>();
         Wintun w = Wintun.Instance;
         DnsProxyServer dnsServer = new DnsProxyServer();
         bool running = false;
         public event PacketPopedHandler PacketPoped;
 
-        internal void executeLwipTask (Action act)
+        internal bool executeLwipTask (Action act)
         {
-            dispatchQ.Enqueue(act);
-            // dispatchWorks.Add(act);
-            // dispatchWaitHandle.Set();
-            if (dispatchLocker.CurrentCount == 0)
-            {
-                try
-                {
-                    dispatchLocker.Release();
-                }
-                catch (SemaphoreFullException) { }
-            }
+            return taskChannel.Writer.TryWrite(act);
         }
+
         internal Task<TResult> executeLwipTask<TResult> (Func<TResult> act)
         {
             TaskCompletionSource<TResult> tcs = new TaskCompletionSource<TResult>();
-            dispatchQ.Enqueue(() =>
-            // dispatchWorks.Add(() =>
+            taskChannel.Writer.TryWrite(() =>
             {
                 try
                 {
@@ -59,31 +42,14 @@ namespace YtFlow.Tunnel
                     tcs.TrySetException(ex);
                 }
             });
-            if (dispatchLocker.CurrentCount == 0)
-            {
-                try
-                {
-                    dispatchLocker.Release();
-                }
-                catch (SemaphoreFullException) { }
-            }
-            // dispatchWaitHandle.Set();
             return tcs.Task;
         }
+
         private async void doWork ()
         {
-            while (running)
+            while (await taskChannel.Reader.WaitToReadAsync())
             {
-                Action act;
-                if (!dispatchQ.TryDequeue(out act))
-                // {
-                // Debug.WriteLine($"{dispatchQ.Count} tasks remain");
-                //Task.Run(() =>
-                //if (!dispatchWorks.TryTake(out act, 250))
-                {
-                    await dispatchLocker.WaitAsync(250);
-                    continue;
-                }
+                taskChannel.Reader.TryRead(out var act);
                 try
                 {
 #if YTLOG_VERBOSE
@@ -93,16 +59,14 @@ namespace YtFlow.Tunnel
 #if YTLOG_VERBOSE
                         //Debug.WriteLine($"{dispatchWorks.Count} tasks remain {sw.ElapsedMilliseconds}");
 #endif
-                }//).Wait(2000);
+                }
                 catch (Exception e)
                 {
-                    // await Task.Delay(10);
-                    DebugLogger.Log(e.Message);
-                    DebugLogger.Log(e.StackTrace);
+                    DebugLogger.Log("Error from task queue: " + e.ToString());
                 }
-                // dispatchWaitHandle.WaitOne();
             }
         }
+
         public async void Init ()
         {
             if (running)
@@ -111,7 +75,11 @@ namespace YtFlow.Tunnel
             }
             running = true;
             adapterFactory = AdapterConfig.GetAdapterFactoryFromDefaultFile();
-            dispatchWorker = Task.Run(() => doWork());
+            taskChannel = Channel.CreateUnbounded<Action>(new UnboundedChannelOptions()
+            {
+                SingleReader = true
+            });
+            var _ = Task.Run(() => doWork());
 
             w.PacketPoped += W_PopPacket;
             w.DnsPacketPoped += W_DnsPacketPoped;
@@ -126,15 +94,13 @@ namespace YtFlow.Tunnel
                 {
                     w.CheckTimeout();
                     return 0;
-                });
-                await Task.Delay(250);
+                }).ConfigureAwait(false);
+                await Task.Delay(250).ConfigureAwait(false);
                 if (i % 10 == 0)
                 {
-                    try
-                    {
-                        DebugLogger.Log("lwIP watchdog running: " + i.ToString());
-                    }
-                    catch (Exception) { }
+                    adapters.RemoveAll(w => !w.TryGetTarget(out var a) || a.IsShutdown == 1);
+                    DebugLogger.Log("# of connections in local stack: " + ConnectionCount.ToString());
+                    DebugLogger.Log("# of adapters: " + adapters.Count.ToString());
                 }
             }
         }
@@ -145,16 +111,17 @@ namespace YtFlow.Tunnel
                 return;
             }
             DebugLogger.Log("Tun deinit req");
-            foreach (var adapter in adapters.Where(a => !a.IsShutdown))
+            foreach (var weakAdapter in adapters.Where(w => w.TryGetTarget(out var a) && a.IsShutdown != 0))
             {
                 try
                 {
+                    weakAdapter.TryGetTarget(out var adapter);
                     adapter.Reset();
                 }
                 catch (Exception) { }
             }
 
-            await Task.Delay(300);
+            await Task.Delay(300).ConfigureAwait(false);
             w.Deinit();
             w.PacketPoped -= W_PopPacket;
             w.DnsPacketPoped -= W_DnsPacketPoped;
@@ -163,8 +130,9 @@ namespace YtFlow.Tunnel
             adapters.Clear();
             // To avoid problems after reconnecting
             // dnsServer.Clear();
-            dispatchWorker = null;
+            // dispatchWorker = null;
             running = false;
+            taskChannel.Writer.TryComplete();
             // debugSocket?.Dispose();
             // debugSocket = null;
         }
@@ -174,7 +142,7 @@ namespace YtFlow.Tunnel
             try
             {
                 var res = await dnsServer.QueryAsync(e).ConfigureAwait(false);
-                await executeLwipTask(() => w.PushDnsPayload(addr, port, res));
+                await executeLwipTask(() => w.PushDnsPayload(addr, port, res)).ConfigureAwait(false);
             }
             catch (Exception)
             {
@@ -187,11 +155,7 @@ namespace YtFlow.Tunnel
         private void W_EstablishTcp (TcpSocket socket)
         {
             var adapter = adapterFactory.CreateAdapter(socket, this);
-            adapters.Add(adapter);
-            if (adapters.Count > 150)
-            {
-                adapters.RemoveAll(a => a.IsShutdown);
-            }
+            adapters.Add(new WeakReference<TunSocketAdapter>(adapter));
         }
 
         private void W_PopPacket (object sender, byte[] e)
@@ -203,7 +167,7 @@ namespace YtFlow.Tunnel
         public async void PushPacket ([ReadOnlyArray] byte[] packet)
         {
             /*if (dispatchQ.Count < 100)*/
-            byte ret = await executeLwipTask(() => w.PushPacket(packet));
+            byte ret = await executeLwipTask(() => w.PushPacket(packet)).ConfigureAwait(false);
             if (ret == 0)
             {
                 var _ = DebugLogger.LogPacketWithTimestamp(packet);
@@ -214,7 +178,7 @@ namespace YtFlow.Tunnel
             }
         }
 
-        public uint ConnectionCount { get => TcpSocket.ConnectionCount(); }
-        public int TaskCount { get => dispatchQ.Count; }
+        public ulong ConnectionCount { get => TcpSocket.ConnectionCount(); }
+        public int TaskCount { get => throw new NotImplementedException(); }
     }
 }

@@ -4,11 +4,10 @@ using Wintun2socks;
 
 namespace YtFlow.Tunnel
 {
+
     internal abstract class ProxyAdapter : TunSocketAdapter
     {
-        protected bool RemoteDisconnecting { get; set; } = false;
         protected bool RemoteDisconnected { get; set; } = false;
-        public override bool IsShutdown => LocalDisconnected && RemoteDisconnected;
         public ProxyAdapter (TcpSocket socket, TunInterface tun) : base(socket, tun)
         {
             ReadData += ProxyAdapter_ReadData;
@@ -20,17 +19,17 @@ namespace YtFlow.Tunnel
         {
             if (!RemoteDisconnected)
             {
-                DisconnectRemote();
+                FinishSendToRemote();
             }
         }
 
-        protected virtual Task RemoteReceived (Memory<byte> e)
+        protected Task RemoteReceived (Span<byte> e)
         {
             return Write(e);
         }
 
         protected abstract void SendToRemote (byte[] e);
-        protected abstract void DisconnectRemote ();
+        protected abstract void FinishSendToRemote (Exception ex = null);
 
         private void ProxyAdapter_ReadData (object sender, byte[] e)
         {
@@ -39,23 +38,17 @@ namespace YtFlow.Tunnel
 
         private void ProxyAdapter_OnError (object sender, int err)
         {
-            LocalDisconnected = true;
-            // Close();
             if (!RemoteDisconnected)
             {
-                DebugLogger.Log("OnError " + err.ToString());
-                DisconnectRemote();
+                FinishSendToRemote(new LwipException(err));
             }
         }
 
         protected override void CheckShutdown ()
         {
-            if (IsShutdown)
-            {
-                ReadData -= ProxyAdapter_ReadData;
-                OnError -= ProxyAdapter_OnError;
-                OnFinished -= ProxyAdapter_OnFinished;
-            }
+            ReadData -= ProxyAdapter_ReadData;
+            OnError -= ProxyAdapter_OnError;
+            OnFinished -= ProxyAdapter_OnFinished;
             base.CheckShutdown();
         }
     }

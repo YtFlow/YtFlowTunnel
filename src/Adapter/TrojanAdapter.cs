@@ -56,7 +56,7 @@ namespace YtFlow.Tunnel
             catch (Exception)
             {
                 Debug.WriteLine("Error connecting to remote");
-                DisconnectRemote();
+                FinishSendToRemote();
                 Reset();
                 return;
             }
@@ -65,7 +65,7 @@ namespace YtFlow.Tunnel
             if (domain == null)
             {
                 Debug.WriteLine("Cannot find DNS record");
-                DisconnectRemote();
+                FinishSendToRemote();
                 Reset();
                 return;
             }
@@ -109,7 +109,7 @@ namespace YtFlow.Tunnel
             catch (Exception)
             {
                 Debug.WriteLine("Error sending header to remote");
-                DisconnectRemote();
+                FinishSendToRemote();
                 Reset();
                 return;
             }
@@ -128,7 +128,7 @@ namespace YtFlow.Tunnel
                     Debug.WriteLine($"Received {len} bytes");
 #endif
 
-                    await RemoteReceived(remotebuf.AsMemory(0, len));
+                    await RemoteReceived(remotebuf.AsSpan(0, len));
                 }
                 catch (Exception)
                 {
@@ -145,13 +145,8 @@ namespace YtFlow.Tunnel
             catch (Exception) { }
         }
 
-        protected override async void DisconnectRemote ()
+        protected override async void FinishSendToRemote (Exception ex = null)
         {
-            if (RemoteDisconnecting)
-            {
-                return;
-            }
-            RemoteDisconnecting = true;
             try
             {
                 if (!localbuf.IsEmpty)
@@ -206,11 +201,8 @@ namespace YtFlow.Tunnel
 
         protected override void CheckShutdown ()
         {
-            if (IsShutdown)
-            {
-                networkStream?.Dispose();
-                r?.Dispose();
-            }
+            networkStream?.Dispose();
+            r?.Dispose();
             base.CheckShutdown();
         }
     }

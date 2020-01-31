@@ -79,6 +79,11 @@ namespace YtFlow.Tunnel
             return RealInitDebugSocket().ContinueWith(t => { }).AsAsyncAction();
         }
 
+        public static bool InitNeeded ()
+        {
+            return IsDebugAddrSet() && debugSocket != null;
+        }
+
         private static async Task RealResetLoggers ()
         {
             Logger = (_) => { };
@@ -110,6 +115,7 @@ namespace YtFlow.Tunnel
 
         private static async Task RealLogPacketWithTimestamp (byte[] b)
         {
+#if YTLOG_VERBOSE
             var socket = debugSocket;
             if (socket == null) return;
             var date = DateTime.Now.ToString("HH:mm:ss.fff\r\n");
@@ -129,6 +135,9 @@ namespace YtFlow.Tunnel
             catch (Exception)
             {
             }
+#else
+            return;
+#endif
         }
 
         internal static Task LogPacketWithTimestamp (byte[] b)

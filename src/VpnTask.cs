@@ -1,6 +1,4 @@
 ﻿using System;
-using System.Runtime.InteropServices.WindowsRuntime;
-using System.Text;
 using Windows.ApplicationModel.Background;
 using Windows.ApplicationModel.Core;
 using Windows.Networking.Vpn;
@@ -29,16 +27,21 @@ namespace YtFlow.Tunnel
         internal static void ClearContext () => ClearSharedObject("context");
         public async void Run (IBackgroundTaskInstance taskInstance)
         {
-            var deferral = taskInstance.GetDeferral();
-            try
+            var initDebugSocketNeeded = DebugLogger.InitNeeded();
+            BackgroundTaskDeferral deferral = null;
+            if (initDebugSocketNeeded)
             {
-                await DebugLogger.InitDebugSocket();
+                deferral = taskInstance.GetDeferral();
+                try
+                {
+                    await DebugLogger.InitDebugSocket();
+                }
+                catch (Exception) { }
             }
-            catch (Exception) { }
             var plugin = GetPlugin();
             VpnChannel.ProcessEventAsync(plugin, taskInstance.TriggerDetails);
             DebugLogger.Log("VPN Background task finished");
-            deferral.Complete();
+            deferral?.Complete();
         }
     }
 }

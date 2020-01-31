@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Runtime.InteropServices.WindowsRuntime;
-using System.Text;
 using Windows.Networking;
 using Windows.Networking.Sockets;
 using Windows.Networking.Vpn;
@@ -172,14 +171,17 @@ namespace YtFlow.Tunnel
         {
             try
             {
-                while (packets.Size > 0)
+                uint packetCount;
+                while ((packetCount = packets.Size) > 0)
                 {
+                    while (packetCount-- > 0)
+                    {
 #if YTLOG_VERBOSE
-                    LogLine("Encapsulating " + packets.Size.ToString(), channel);
+                        LogLine("Encapsulating " + packets.Size.ToString(), channel);
 #endif
-                    var packet = packets.RemoveAtBegin();
-                    encapulatedPackets.Append(packet);
-                    //LogLine("Encapsulated one packet", channel);
+                        var packet = packets.RemoveAtBegin();
+                        encapulatedPackets.Append(packet);
+                    }
                 }
             }
             catch (Exception ex)
@@ -188,24 +190,27 @@ namespace YtFlow.Tunnel
             }
         }
 
-        public void Decapsulate (VpnChannel channel, VpnPacketBuffer encapBuffer, VpnPacketBufferList decapsulatedPackets, VpnPacketBufferList controlPacketsToSend)
+        public void Decapsulate (VpnChannel channel, VpnPacketBuffer encapPacketBuffer, VpnPacketBufferList decapsulatedPackets, VpnPacketBufferList controlPacketsToSend)
         {
             try
             {
-                var buf = channel.GetVpnReceivePacketBuffer();
+                var vpnPacketBuffer = channel.GetVpnReceivePacketBuffer();
+                // Avoid duplicated calls to buffer accessors
+                var vpnBuffer = vpnPacketBuffer.Buffer;
+                var encapBuf = encapPacketBuffer.Buffer;
 #if YTLOG_VERBOSE
                 LogLine("Decapsulating one packet", channel);
 #endif
-                if (encapBuffer.Buffer.Length > buf.Buffer.Capacity)
+                if (encapBuf.Length > vpnBuffer.Capacity)
                 {
                     //Drop larger packets.
                     DebugLogger.Log("Dropped an oversized packet");
                     return;
                 }
 
-                encapBuffer.Buffer.CopyTo(buf.Buffer);
-                buf.Buffer.Length = encapBuffer.Buffer.Length;
-                decapsulatedPackets.Append(buf);
+                encapBuf.CopyTo(vpnBuffer);
+                vpnBuffer.Length = encapBuf.Length;
+                decapsulatedPackets.Append(vpnPacketBuffer);
                 // LogLine("Decapsulated one packet", channel);
             }
             catch (Exception ex)

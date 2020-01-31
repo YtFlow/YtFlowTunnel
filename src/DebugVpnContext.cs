@@ -42,7 +42,7 @@ namespace YtFlow.Tunnel
             {
                 try
                 {
-                    var recv = await u.ReceiveAsync();
+                    var recv = await u.ReceiveAsync().ConfigureAwait(false);
                     tun?.PushPacket(recv.Buffer);
                 }
                 catch (Exception) { break; }
@@ -57,10 +57,10 @@ namespace YtFlow.Tunnel
         }
 
         private IPEndPoint pluginEndpoint = new IPEndPoint(new IPAddress(new byte[] { 127, 0, 0, 1 }), 9007);
-        private async void Tun_PacketPoped (object sender, byte[] e)
+        private void Tun_PacketPoped (object sender, byte[] e)
         {
             // var _ = s.OutputStream.WriteAsync(e.AsBuffer());
-            await u?.SendAsync(e, e.Length, pluginEndpoint);
+            u?.SendAsync(e, e.Length, pluginEndpoint);
         }
 
         private void S_MessageReceived (DatagramSocket sender, DatagramSocketMessageReceivedEventArgs args)
