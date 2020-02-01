@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Buffers;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
@@ -26,7 +25,6 @@ namespace YtFlow.Tunnel
         int port;
         private Channel<byte[]> outboundChan = Channel.CreateUnbounded<byte[]>(new UnboundedChannelOptions()
         {
-            AllowSynchronousContinuations = true,
             SingleReader = true
         });
         private ICryptor cryptor = null;
@@ -141,9 +139,9 @@ namespace YtFlow.Tunnel
                     await Task.WhenAll(
                         StartRecv(recvCancel.Token).ContinueWith(t =>
                         {
-                            sendCancel.Cancel();
                             if (t.IsFaulted)
                             {
+                                sendCancel.Cancel();
                                 var ex = t.Exception.Flatten().GetBaseException();
                                 DebugLogger.Log($"Recv error: {domain}: {ex}");
                                 throw ex;
@@ -161,7 +159,6 @@ namespace YtFlow.Tunnel
                         }, sendCancel.Token)
                     ).ConfigureAwait(false);
                     DebugLogger.Log("Close!: " + domain);
-                    await FinishRecv().ConfigureAwait(false);
                     await Close().ConfigureAwait(false);
                 }
                 catch (Exception)
@@ -210,6 +207,7 @@ namespace YtFlow.Tunnel
                 var outLen = Decrypt(remotebuf.AsSpan(0, len), GetSpanForWrite(len));
                 await Flush((int)outLen).ConfigureAwait(false);
             }
+            await FinishRecv().ConfigureAwait(false);
         }
 
         protected override void FinishSendToRemote (Exception ex = null)

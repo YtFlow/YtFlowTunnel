@@ -135,6 +135,7 @@ namespace YtFlow.Tunnel
             taskChannel.Writer.TryComplete();
             // debugSocket?.Dispose();
             // debugSocket = null;
+            DebugLogger.initNeeded = null;
         }
 
         private async void W_DnsPacketPoped (object sender, byte[] e, uint addr, ushort port)
@@ -160,22 +161,15 @@ namespace YtFlow.Tunnel
 
         private void W_PopPacket (object sender, byte[] e)
         {
-            PacketPoped?.Invoke(sender, e);
             var _ = DebugLogger.LogPacketWithTimestamp(e);
+            PacketPoped?.Invoke(sender, e);
         }
 
         public async void PushPacket ([ReadOnlyArray] byte[] packet)
         {
             /*if (dispatchQ.Count < 100)*/
+            var _ = DebugLogger.LogPacketWithTimestamp(packet);
             byte ret = await executeLwipTask(() => w.PushPacket(packet)).ConfigureAwait(false);
-            if (ret == 0)
-            {
-                var _ = DebugLogger.LogPacketWithTimestamp(packet);
-            }
-            else
-            {
-                DebugLogger.Logger($"Push packet of size {packet.Length} with result: {ret}");
-            }
         }
 
         public ulong ConnectionCount { get => TcpSocket.ConnectionCount(); }

@@ -70,7 +70,7 @@ namespace YtFlow.Tunnel
             byte writeResult;
             using (var dataHandle = chunk.Pin())
             {
-                writeResult = await SendToSocket(dataHandle, (ushort)chunk.Length, more).ConfigureAwait(false);
+                writeResult = await SendToSocket(dataHandle, (ushort)chunk.Length, more);
                 while (writeResult == 255)
                 {
                     if (!await (localStackBufLock?.WaitAsync(3000, pollCancelSource.Token).ConfigureAwait(false) ?? Task.FromResult(false).ConfigureAwait(false)))
@@ -78,7 +78,7 @@ namespace YtFlow.Tunnel
                         DebugLogger.Log("Local write timeout");
                         break;
                     }
-                    writeResult = await SendToSocket(dataHandle, (ushort)chunk.Length, more).ConfigureAwait(false);
+                    writeResult = await SendToSocket(dataHandle, (ushort)chunk.Length, more);
                 }
             }
             if (writeResult != 0)
@@ -92,7 +92,7 @@ namespace YtFlow.Tunnel
             pipeReader.AdvanceTo(buffer.GetPosition(chunk.Length));
             // await _tun.executeLwipTask(() => _socket.Output());
 
-            if (readResult.IsCanceled || readResult.IsCompleted || writeResult != 0 || pollCancelSource.IsCancellationRequested)
+            if (readResult.IsCanceled || (readResult.IsCompleted && chunk.Length == buffer.Length) || writeResult != 0 || pollCancelSource.IsCancellationRequested)
             {
                 return false;
             }
@@ -101,7 +101,7 @@ namespace YtFlow.Tunnel
 
         private async void StartPolling ()
         {
-            localStackByteCount = await _tun.executeLwipTask(() => _socket.SendBufferSize).ConfigureAwait(false);
+            localStackByteCount = await _tun.executeLwipTask(() => _socket.SendBufferSize);
             try
             {
                 while (await PollOne().ConfigureAwait(false)) { }

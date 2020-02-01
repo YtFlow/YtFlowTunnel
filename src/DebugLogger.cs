@@ -14,6 +14,7 @@ namespace YtFlow.Tunnel
     {
         internal static Action<string> Logger { get; set; } = (_) => { };
         internal static DatagramSocket debugSocket;
+        internal static bool? initNeeded;
         private const string DEBUG_HOST_CONFIG = "debug_host";
         private const string DEBUG_PORT_CONFIG = "debug_port";
         internal static readonly IPropertySet Settings = ApplicationData.Current.LocalSettings.Values;
@@ -81,7 +82,13 @@ namespace YtFlow.Tunnel
 
         public static bool InitNeeded ()
         {
-            return IsDebugAddrSet() && debugSocket != null;
+            if (initNeeded is bool realInitNeeded)
+            {
+                return realInitNeeded;
+            }
+            realInitNeeded = debugSocket != null && IsDebugAddrSet();
+            initNeeded = realInitNeeded;
+            return realInitNeeded;
         }
 
         private static async Task RealResetLoggers ()
