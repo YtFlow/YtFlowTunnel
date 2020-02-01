@@ -1,8 +1,10 @@
 ﻿using System;
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net.Sockets;
 using System.Text;
+using System.Threading;
+using System.Threading.Channels;
+using System.Threading.Tasks;
 using Wintun2socks;
 using YtFlow.Tunnel.DNS;
 
@@ -13,34 +15,31 @@ namespace YtFlow.Tunnel
         private static readonly byte[] HEADER1 = Encoding.UTF8.GetBytes("CONNECT ");
         private static readonly byte[] HEADER2 = Encoding.UTF8.GetBytes(" HTTP/1.1\r\n\r\n");
         private const int RECV_BUFFER_LEN = 1024;
-        TcpClient r = new TcpClient(AddressFamily.InterNetwork);
+        private const int HEAD_BUFFER_LEN = 100;
+        TcpClient client = new TcpClient(AddressFamily.InterNetwork);
         NetworkStream networkStream;
-        // IInputStream networkReadStream;
-        // IOutputStream networkWriteStream;
-        string server;
-        int port;
-        private ConcurrentQueue<byte[]> localbuf = new ConcurrentQueue<byte[]>();
-        private bool remoteConnected = false;
-
-        public HttpAdapter (string srv, int port, TcpSocket socket, TunInterface tun) : base(socket, tun)
+        private Channel<byte[]> outboundChan = Channel.CreateUnbounded<byte[]>(new UnboundedChannelOptions()
         {
-            server = srv;
-            this.port = port;
+            SingleReader = true
+        });
 
-            Init();
+        public HttpAdapter (string server, int port, TcpSocket socket, TunInterface tun) : base(socket, tun)
+        {
+            Init(server, port);
         }
 
-        public async void Init ()
+        public async void Init (string server, int port)
         {
-            var connectTask = r.ConnectAsync(server, port);
             string domain = DnsProxyServer.Lookup(_socket.RemoteAddr);
             if (domain == null)
             {
-                Debug.WriteLine("Cannot find DNS record");
-                FinishSendToRemote();
+                RemoteDisconnected = true;
+                DebugLogger.Log("Cannot find DNS record");
                 Reset();
+                CheckShutdown();
                 return;
             }
+            var connectTask = client.ConnectAsync(server, port);
             string portStr = _socket.RemotePort.ToString();
             byte[] portBytes = Encoding.UTF8.GetBytes(portStr);
             byte[] domainBytes = Encoding.UTF8.GetBytes(domain);
@@ -52,17 +51,18 @@ namespace YtFlow.Tunnel
             portBytes.CopyTo(firstSeg, HEADER1.Length + domainBytes.Length + 1);
             HEADER2.CopyTo(firstSeg, headerLen - HEADER2.Length);
 
+            // Connect and perform handshake
             try
             {
                 await connectTask;
-                Debug.WriteLine("Connected");
-                networkStream = r.GetStream();
+                DebugLogger.Log("Connected: " + domain);
+                networkStream = client.GetStream();
                 await networkStream.WriteAsync(firstSeg, 0, headerLen);
-                byte[] responseBuf = new byte[RECV_BUFFER_LEN];
-                var responseLen = await networkStream.ReadAsync(responseBuf, 0, 100);
+                byte[] responseBuf = new byte[HEAD_BUFFER_LEN];
+                var responseLen = await networkStream.ReadAsync(responseBuf, 0, HEAD_BUFFER_LEN);
                 if (responseLen < 14)
                 {
-                    throw new InvalidOperationException("Remote response too short.");
+                    throw new InvalidOperationException("Remote response too short");
                 }
                 if ((responseBuf[9] == (byte)'2') && (responseBuf[10] == (byte)'0') && (responseBuf[11] == (byte)'0'))
                 {
@@ -70,7 +70,8 @@ namespace YtFlow.Tunnel
                 }
                 else
                 {
-                    throw new InvalidOperationException("Remote connection cannot be established.");
+                    var code = 100 * (responseBuf[9] - '0') + 10 * (responseBuf[10] - '0') + responseBuf[11] - '0';
+                    throw new InvalidOperationException("Remote status code: " + code.ToString());
                 }
                 bool foundHeader = false;
                 int headerStart;
@@ -93,7 +94,7 @@ namespace YtFlow.Tunnel
                 }
                 if (!foundHeader)
                 {
-                    throw new InvalidOperationException("Unrecognized remote header.");
+                    throw new InvalidOperationException("Unrecognized remote header: " + Encoding.UTF8.GetString(responseBuf, 0, responseLen));
                 }
                 headerStart += 4;
                 if (headerStart >= responseLen)
@@ -102,136 +103,66 @@ namespace YtFlow.Tunnel
                 }
                 else
                 {
-                    await RemoteReceived(responseBuf.AsSpan(headerStart, responseLen));
+                    var _ = RemoteReceived(responseBuf.AsSpan(headerStart, responseLen));
                 }
-
-                int bytesToConfirm = 0;
-                while (localbuf.TryDequeue(out var buf))
-                {
-                    bytesToConfirm += buf.Length;
-                    // await networkWriteStream.WriteAsync(await Encrypt(buf));
-                    await networkStream.WriteAsync(buf, 0, buf.Length);
-                }
-                remoteConnected = true;
-                if (bytesToConfirm > 0)
-                {
-                    Recved((ushort)bytesToConfirm);
-                }
-                //await networkWriteStream.FlushAsync();
-                Debug.WriteLine("Sent data with header");
             }
             catch (Exception ex)
             {
-                Debug.WriteLine("Error sending header to remote" + ex.Message);
-                FinishSendToRemote();
+                Debug.WriteLine($"Error sending header: {domain}: " + ex.ToString());
+                CheckShutdown();
                 Reset();
                 return;
             }
 
-            // IBuffer remotebuf = WindowsRuntimeBuffer.Create(RECV_BUFFER_LEN);
-            byte[] remotebuf = new byte[RECV_BUFFER_LEN];
-            while (r.Connected && networkStream.CanRead)
-            {
-                try
-                {
-                    var len = await networkStream.ReadAsync(remotebuf, 0, RECV_BUFFER_LEN).ConfigureAwait(false);
-                    if (len == 0)
-                    {
-                        break;
-                    }
-#if YTLOG_VERBOSE
-                    Debug.WriteLine($"Received {len} bytes");
-#endif
-
-                    await RemoteReceived(remotebuf.AsSpan(0, len));
-                }
-                catch (Exception)
-                {
-                    break;
-                }
-            }
-
-            try
-            {
-                Debug.WriteLine("Remote sent no data");
-                // networkReadStream?.Dispose();
-                r?.Client?.Shutdown(SocketShutdown.Receive);
-                Close();
-            }
-            catch (Exception) { }
+            await StartForward(domain);
         }
 
-        protected override async void FinishSendToRemote (Exception ex = null)
+        protected override void FinishSendToRemote (Exception ex = null)
         {
-            try
-            {
-                if (!localbuf.IsEmpty)
-                {
-                    while (localbuf.TryDequeue(out var buf))
-                    {
-                        await networkStream?.WriteAsync(buf, 0, buf.Length);
-                    }
-                    await networkStream?.FlushAsync();
-                }
-            }
-            catch (Exception) { }
-            try
-            {
-                // networkWriteStream?.Dispose();
-                r?.Client?.Shutdown(SocketShutdown.Send);
-                Debug.WriteLine("Disposed remote write stream");
-            }
-            catch (Exception)
-            {
-                Debug.WriteLine("Error closing remote write stream");
-            }
-            RemoteDisconnected = true;
-            CheckShutdown();
-            // try
-            // {
-            //     r.Dispose();
-            //     Debug.WriteLine("remote socket disposed");
-            // }
-            // catch (Exception)
-            // {
-            //     Debug.WriteLine("remote socket already disposed");
-            // }
+            outboundChan.Writer.TryComplete(ex);
         }
 
         protected override async void SendToRemote (byte[] buffer)
         {
-            if (remoteConnected)
+            if (outboundChan != null)
             {
-                try
-                {
-                    await networkStream.WriteAsync(buffer, 0, buffer.Length);
-                    await networkStream.FlushAsync();
-                    Recved((ushort)buffer.Length);
-#if YTLOG_VERBOSE
-                    Debug.WriteLine("Sent data" + buffer.Length);
-#endif
-                    // r.Send(e);
-                }
-                catch (Exception)
-                {
-                    Debug.WriteLine("Cannot send to remote");
-                }
+                await outboundChan.Writer.WriteAsync(buffer);
             }
-            else
+        }
+
+        protected override async Task StartSend (CancellationToken cancellationToken = default)
+        {
+            while (await outboundChan.Reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                // buffer.CopyTo(0, localbuf, localbuf.Length, buffer.Length);
-                // localbuf.Length += buffer.Length;
-                localbuf.Enqueue(buffer);
-#if YTLOG_VERBOSE
-                Debug.WriteLine("Queued data" + buffer.Length);
-#endif
+                outboundChan.Reader.TryRead(out var data);
+                // TODO: batch write
+                await networkStream.WriteAsync(data, 0, data.Length, cancellationToken).ConfigureAwait(false);
+                // await networkStream.FlushAsync();
+                ConfirmRecvFromLocal((ushort)data.Length);
             }
+            await networkStream.FlushAsync(cancellationToken).ConfigureAwait(false);
+            client.Client.Shutdown(SocketShutdown.Send);
+        }
+
+        protected override async Task StartRecv (CancellationToken cancellationToken = default)
+        {
+            byte[] buf = new byte[RECV_BUFFER_LEN];
+            while (client.Connected && networkStream.CanRead)
+            {
+                var len = await networkStream.ReadAsync(buf, 0, RECV_BUFFER_LEN, cancellationToken).ConfigureAwait(false);
+                if (len == 0)
+                {
+                    break;
+                }
+                await WriteToLocal(buf.AsSpan(0, len)).ConfigureAwait(false);
+            }
+            await FinishInbound().ConfigureAwait(false);
         }
 
         protected override void CheckShutdown ()
         {
             networkStream?.Dispose();
-            r?.Dispose();
+            client?.Dispose();
             base.CheckShutdown();
         }
     }

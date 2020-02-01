@@ -7,8 +7,8 @@ namespace YtFlow.Tunnel.Adapter.Factory
 {
     internal class ShadowsocksFactory : IAdapterFactory
     {
-        private ShadowsocksConfig config { get; set; }
-        private CryptorFactory cryptorFactory { get; set; }
+        private ShadowsocksConfig config { get; }
+        private CryptorFactory cryptorFactory { get; }
         public ShadowsocksFactory (ShadowsocksConfig config)
         {
             this.config = config;

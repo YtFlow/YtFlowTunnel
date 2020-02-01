@@ -14,15 +14,13 @@ namespace YtFlow.Tunnel
     {
         private const int RECV_BUFFER_LEN = 4096;
         private const int SEND_BUFFER_LEN = 4096;
-        TcpClient r = new TcpClient(AddressFamily.InterNetwork)
+        TcpClient client = new TcpClient(AddressFamily.InterNetwork)
         {
             NoDelay = true,
             ReceiveTimeout = 20,
             SendTimeout = 20
         };
         NetworkStream networkStream;
-        string server;
-        int port;
         private Channel<byte[]> outboundChan = Channel.CreateUnbounded<byte[]>(new UnboundedChannelOptions()
         {
             SingleReader = true
@@ -56,16 +54,14 @@ namespace YtFlow.Tunnel
             }
         }
 
-        public ShadowsocksAdapter (string srv, int port, ICryptor _cryptor, TcpSocket socket, TunInterface tun) : base(socket, tun)
+        public ShadowsocksAdapter (string server, int port, ICryptor _cryptor, TcpSocket socket, TunInterface tun) : base(socket, tun)
         {
-            server = srv;
-            this.port = port;
             cryptor = _cryptor;
 
-            Init();
+            Init(server, port);
         }
 
-        public async void Init ()
+        public async void Init (string server, int port)
         {
             /*
             var header = new byte[7];
@@ -89,7 +85,7 @@ namespace YtFlow.Tunnel
 
             try
             {
-                await r.ConnectAsync(server, port).ConfigureAwait(false);
+                await client.ConnectAsync(server, port).ConfigureAwait(false);
                 DebugLogger.Log("Connected: " + domain);
             }
             catch (Exception ex)
@@ -121,93 +117,48 @@ namespace YtFlow.Tunnel
             var encryptedFirstSeg = new byte[firstSeg.Length + 16]; // Reserve space for IV
             var encryptedFirstSegLen = Encrypt(firstSeg, encryptedFirstSeg);
 
+            bool headerSent = false;
             try
             {
-                networkStream = r.GetStream();
+                networkStream = client.GetStream();
                 await networkStream.WriteAsync(encryptedFirstSeg, 0, (int)encryptedFirstSegLen).ConfigureAwait(false);
                 if (bytesToConfirm > 0)
                 {
-                    Recved((ushort)bytesToConfirm);
+                    ConfirmRecvFromLocal((ushort)bytesToConfirm);
                 }
                 //await networkWriteStream.FlushAsync();
-
-                // Start forwarding data
-                var recvCancel = new CancellationTokenSource();
-                var sendCancel = new CancellationTokenSource();
-                try
-                {
-                    await Task.WhenAll(
-                        StartRecv(recvCancel.Token).ContinueWith(t =>
-                        {
-                            if (t.IsFaulted)
-                            {
-                                sendCancel.Cancel();
-                                var ex = t.Exception.Flatten().GetBaseException();
-                                DebugLogger.Log($"Recv error: {domain}: {ex}");
-                                throw ex;
-                            }
-                        }, recvCancel.Token),
-                        StartSend(sendCancel.Token).ContinueWith(t =>
-                        {
-                            if (t.IsFaulted)
-                            {
-                                recvCancel.Cancel();
-                                var ex = t.Exception.Flatten().GetBaseException();
-                                DebugLogger.Log($"Send error: {domain}: {ex}");
-                                throw ex;
-                            }
-                        }, sendCancel.Token)
-                    ).ConfigureAwait(false);
-                    DebugLogger.Log("Close!: " + domain);
-                    await Close().ConfigureAwait(false);
-                }
-                catch (Exception)
-                {
-                    // Something wrong happened during recv/send and was handled separatedly.
-                    DebugLogger.Log("Reset!: " + domain);
-                    Reset();
-                }
-                finally
-                {
-                    recvCancel.Dispose();
-                    sendCancel.Dispose();
-                }
+                headerSent = true;
             }
             catch (Exception ex)
-            {
-                DebugLogger.Log($"Error sending header to remote, reset!: {domain} : {ex}");
-                Reset();
-            }
-            finally
             {
                 RemoteDisconnected = true;
-            }
-
-            try
-            {
+                DebugLogger.Log($"Error sending header to remote, reset!: {domain} : {ex}");
+                Reset();
                 CheckShutdown();
             }
-            catch (Exception ex)
+
+            if (!headerSent)
             {
-                DebugLogger.Log($"Error shutting down: {domain}: {ex}");
+                return;
             }
+
+            await StartForward(domain);
         }
 
-        private async Task StartRecv (CancellationToken cancellationToken = default)
+        protected override async Task StartRecv (CancellationToken cancellationToken = default)
         {
-            byte[] remotebuf = new byte[RECV_BUFFER_LEN];
-            var networkStream = r.GetStream();
-            while (r.Connected && networkStream.CanRead == true)
+            byte[] buf = new byte[RECV_BUFFER_LEN];
+            while (client.Connected && networkStream.CanRead)
             {
-                var len = await networkStream.ReadAsync(remotebuf, 0, RECV_BUFFER_LEN, cancellationToken).ConfigureAwait(false);
+                var len = await networkStream.ReadAsync(buf, 0, RECV_BUFFER_LEN, cancellationToken).ConfigureAwait(false);
                 if (len == 0)
                 {
                     break;
                 }
-                var outLen = Decrypt(remotebuf.AsSpan(0, len), GetSpanForWrite(len));
-                await Flush((int)outLen).ConfigureAwait(false);
+                var outLen = Decrypt(buf.AsSpan(0, len), GetSpanForWriteToLocal(len));
+                await FlushToLocal((int)outLen).ConfigureAwait(false);
             }
-            await FinishRecv().ConfigureAwait(false);
+            await FinishInbound().ConfigureAwait(false);
         }
 
         protected override void FinishSendToRemote (Exception ex = null)
@@ -223,27 +174,25 @@ namespace YtFlow.Tunnel
             }
         }
 
-        private async Task StartSend (CancellationToken cancellationToken)
+        protected override async Task StartSend (CancellationToken cancellationToken)
         {
-            byte[] decBuf = new byte[SEND_BUFFER_LEN];
+            byte[] buf = new byte[SEND_BUFFER_LEN];
             while (await outboundChan.Reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
             {
                 outboundChan.Reader.TryRead(out var data);
                 var offset = 0;
                 while (offset < data.Length)
                 {
-                    var len = Encrypt(data.AsSpan().Slice(offset, Math.Min(data.Length - offset, SEND_BUFFER_LEN)), decBuf);
+                    var len = Encrypt(data.AsSpan().Slice(offset, Math.Min(data.Length - offset, SEND_BUFFER_LEN)), buf);
                     offset += (int)len;
-                    await networkStream.WriteAsync(decBuf, 0, (int)len, cancellationToken).ConfigureAwait(false);
+                    // TODO: batch write
+                    await networkStream.WriteAsync(buf, 0, (int)len, cancellationToken).ConfigureAwait(false);
                 }
                 // await networkStream.FlushAsync();
-                Recved((ushort)data.Length);
-#if YTLOG_VERBOSE
-                Debug.WriteLine("Sent data" + buffer.Length);
-#endif
+                ConfirmRecvFromLocal((ushort)data.Length);
             }
             await networkStream.FlushAsync(cancellationToken).ConfigureAwait(false);
-            r.Client.Shutdown(SocketShutdown.Send);
+            client.Client.Shutdown(SocketShutdown.Send);
         }
 
         protected override void CheckShutdown ()
@@ -262,12 +211,12 @@ namespace YtFlow.Tunnel
             }
             try
             {
-                r?.Dispose();
+                client?.Dispose();
             }
             catch (ObjectDisposedException) { }
             finally
             {
-                r = null;
+                client = null;
             }
             base.CheckShutdown();
         }

@@ -125,14 +125,10 @@ namespace YtFlow.Tunnel
 #if YTLOG_VERBOSE
             var socket = debugSocket;
             if (socket == null) return;
-            var date = DateTime.Now.ToString("HH:mm:ss.fff\r\n");
             var sb = new StringBuilder(b.Length * 3 + 11 + 16);
-            sb.Append(date);
+            sb.Append(DateTime.Now.ToString("HH:mm:ss.fff\r\n"));
             sb.Append("000000 ");
-            foreach (var by in b)
-            {
-                sb.AppendFormat("{0:x2} ", by);
-            }
+            sb.Append(BitConverter.ToString(b).Replace('-', ' '));
             sb.Append("\r\n");
             try
             {

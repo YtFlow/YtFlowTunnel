@@ -1,11 +1,14 @@
 ﻿using System;
-using System.Collections.Concurrent;
-using System.Diagnostics;
-using System.Linq;
-using System.Net.Sockets;
+using System.Collections.Generic;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
-using Windows.Foundation.Metadata;
+using System.Threading;
+using System.Threading.Channels;
+using System.Threading.Tasks;
+using Windows.Networking;
+using Windows.Networking.Sockets;
+using Windows.Security.Cryptography.Certificates;
+using Windows.Storage.Streams;
 using Wintun2socks;
 using YtFlow.Tunnel.DNS;
 
@@ -14,65 +17,62 @@ namespace YtFlow.Tunnel
     /// <summary>
     /// Trojan adapter
     /// </summary>
-    /// <remarks>To use Trojan adapter, please manually upgrade minimum SDK version to 16299 or later.</remarks>
     internal sealed class TrojanAdapter : ProxyAdapter
     {
-        private const int RECV_BUFFER_LEN = 1024;
-        TcpClient r = new TcpClient(AddressFamily.InterNetwork);
-        // SslStream networkStream;
-        NetworkStream networkStream;
-        string server;
-        int port;
-        private ConcurrentQueue<byte[]> localbuf = new ConcurrentQueue<byte[]>();
-        private bool remoteConnected = false;
-
-        public TrojanAdapter (string srv, int port, string hashedPassword, TcpSocket socket, TunInterface tun) : base(socket, tun)
+        private const int RECV_BUFFER_LEN = 4096;
+        private const int SEND_BUFFER_LEN = 4096;
+        private StreamSocket socket = new StreamSocket();
+        private IInputStream inputStream;
+        private IOutputStream outputStream;
+        private Channel<byte[]> outboundChan = Channel.CreateUnbounded<byte[]>(new UnboundedChannelOptions()
         {
-            if (!ApiInformation.IsApiContractPresent("Windows.Foundation.UniversalApiContract", 5))
-            {
-                throw new InvalidOperationException("Trojan adapter is not supported on platforms earlier than 1709");
-            }
-            server = srv;
-            this.port = port;
-            // TODO: hash password
-            if (hashedPassword.Length != 56 || hashedPassword.Any(c => !((c >= 0 && c <= 9) || (c > 'a' && c < 'f'))))
-            {
-                throw new ArgumentOutOfRangeException("Hashed password only allows 56 hex characters");
-            }
+            SingleReader = true
+        });
 
-            Init(hashedPassword);
+        public TrojanAdapter (HostName server, string port, Memory<byte> hashedPassword, bool allowInsecure, TcpSocket socket, TunInterface tun) : base(socket, tun)
+        {
+            Init(server, port, hashedPassword, allowInsecure);
         }
 
-        public async void Init (string hashedPassword)
+        public async void Init (HostName server, string port, Memory<byte> hashedPassword, bool allowInsecure)
         {
-            try
-            {
-                await r.ConnectAsync(server, port);
-                // TODO: verify certificate
-                // TODO: compile first
-                // networkStream = new SslStream(r.GetStream(), false, new RemoteCertificateValidationCallback((a, b, c, d) => true));
-                // await networkStream.AuthenticateAsClientAsync(server);
-            }
-            catch (Exception)
-            {
-                Debug.WriteLine("Error connecting to remote");
-                FinishSendToRemote();
-                Reset();
-                return;
-            }
-            Debug.WriteLine("Connected");
             string domain = DnsProxyServer.Lookup(_socket.RemoteAddr);
             if (domain == null)
             {
-                Debug.WriteLine("Cannot find DNS record");
-                FinishSendToRemote();
+                RemoteDisconnected = true;
+                DebugLogger.Log("Cannot find DNS record: " + _socket.RemoteAddr);
                 Reset();
+                CheckShutdown();
                 return;
             }
-            byte[] firstSeg = null;
+
+            try
+            {
+                socket.Control.NoDelay = true;
+                if (allowInsecure)
+                {
+                    socket.Control.IgnorableServerCertificateErrors.Add(ChainValidationResult.Untrusted);
+                    socket.Control.IgnorableServerCertificateErrors.Add(ChainValidationResult.WrongUsage);
+                    socket.Control.IgnorableServerCertificateErrors.Add(ChainValidationResult.IncompleteChain);
+                    socket.Control.IgnorableServerCertificateErrors.Add(ChainValidationResult.Expired);
+                    socket.Control.IgnorableServerCertificateErrors.Add(ChainValidationResult.InvalidName);
+                }
+                await socket.ConnectAsync(server, port, SocketProtectionLevel.Tls12);
+                // TODO: custom certificate, server name
+            }
+            catch (Exception ex)
+            {
+                RemoteDisconnected = true;
+                DebugLogger.Log("Cannot connect to remote: " + ex.ToString());
+                Reset();
+                CheckShutdown();
+                return;
+            }
+
             int headerLen = domain.Length + 65;
             int bytesToConfirm = 0;
-            if (localbuf.TryDequeue(out var firstBuf))
+            byte[] firstSeg;
+            if (outboundChan.Reader.TryRead(out var firstBuf))
             {
                 bytesToConfirm = firstBuf.Length;
                 firstSeg = new byte[headerLen + firstBuf.Length];
@@ -82,7 +82,7 @@ namespace YtFlow.Tunnel
             {
                 firstSeg = new byte[headerLen];
             }
-            Encoding.UTF8.GetBytes(hashedPassword).CopyTo(firstSeg.AsSpan()); // hex(SHA224(password))
+            hashedPassword.CopyTo(firstSeg); // hex(SHA224(password))
             firstSeg[56] = 0x0D; // CR
             firstSeg[57] = 0x0A; // LF
             firstSeg[58] = 0x01; //  CMD
@@ -93,117 +93,117 @@ namespace YtFlow.Tunnel
             firstSeg[headerLen - 3] = (byte)(_socket.RemotePort & 0xFF);
             firstSeg[headerLen - 2] = 0x0D;
             firstSeg[headerLen - 1] = 0x0A;
-            await networkStream.WriteAsync(firstSeg, 0, firstSeg.Length);
 
+            bool headerSent = true;
             try
             {
-                while (localbuf.TryDequeue(out var buf))
+                inputStream = socket.InputStream;
+                outputStream = socket.OutputStream;
+                await outputStream.WriteAsync(firstSeg.AsBuffer());
+                if (bytesToConfirm > 0)
                 {
-                    bytesToConfirm += buf.Length;
-                    await networkStream.WriteAsync(buf, 0, buf.Length);
+                    ConfirmRecvFromLocal((ushort)bytesToConfirm);
                 }
-                remoteConnected = true;
-                Recved((ushort)bytesToConfirm);
-                Debug.WriteLine("Sent data with header");
+                headerSent = true;
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                Debug.WriteLine("Error sending header to remote");
-                FinishSendToRemote();
+                RemoteDisconnected = true;
+                DebugLogger.Log($"Error sending header to remote, reset!: {domain} : {ex}");
                 Reset();
+                CheckShutdown();
+            }
+
+            if (!headerSent)
+            {
                 return;
             }
 
-            byte[] remotebuf = new byte[RECV_BUFFER_LEN];
-            while (r.Connected && networkStream.CanRead)
-            {
-                try
-                {
-                    var len = await networkStream.ReadAsync(remotebuf, 0, RECV_BUFFER_LEN).ConfigureAwait(false);
-                    if (len == 0)
-                    {
-                        break;
-                    }
-#if YTLOG_VERBOSE
-                    Debug.WriteLine($"Received {len} bytes");
-#endif
+            await StartForward(domain);
+        }
 
-                    await RemoteReceived(remotebuf.AsSpan(0, len));
-                }
-                catch (Exception)
+        protected override async Task StartRecv (CancellationToken cancellationToken = default)
+        {
+            byte[] buf = new byte[RECV_BUFFER_LEN];
+            while (true)
+            {
+                var recvBuf = await inputStream.ReadAsync(buf.AsBuffer(), RECV_BUFFER_LEN, InputStreamOptions.Partial).AsTask(cancellationToken).ConfigureAwait(false);
+                if (recvBuf.Length == 0)
                 {
                     break;
                 }
+                await WriteToLocal(buf.AsSpan(0, (int)recvBuf.Length));
             }
-
-            try
-            {
-                Debug.WriteLine("Remote sent no data");
-                r?.Client?.Shutdown(SocketShutdown.Receive);
-                Close();
-            }
-            catch (Exception) { }
+            await FinishInbound().ConfigureAwait(false);
         }
 
-        protected override async void FinishSendToRemote (Exception ex = null)
+        protected override async Task StartSend (CancellationToken cancellationToken = default)
         {
-            try
+            while (await outboundChan.Reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                if (!localbuf.IsEmpty)
+                var totalBytes = 0;
+                var packetsToSend = new List<IBuffer>();
+                while (outboundChan.Reader.TryRead(out var data))
                 {
-                    while (localbuf.TryDequeue(out var buf))
-                    {
-                        await networkStream?.WriteAsync(buf, 0, buf.Length);
-                    }
-                    await networkStream?.FlushAsync();
+                    packetsToSend.Add(data.AsBuffer());
+                    totalBytes += data.Length;
                 }
+                var pendingTasks = new Task[packetsToSend.Count];
+                for (var index = 0; index < packetsToSend.Count; ++index)
+                {
+                    pendingTasks[index] = outputStream.WriteAsync(packetsToSend[index]).AsTask(cancellationToken);
+                }
+                await Task.WhenAll(pendingTasks).ConfigureAwait(false);
+                ConfirmRecvFromLocal((ushort)totalBytes);
             }
-            catch (Exception) { }
-            try
-            {
-                r?.Client?.Shutdown(SocketShutdown.Send);
-                Debug.WriteLine("Disposed remote write stream");
-            }
-            catch (Exception)
-            {
-                Debug.WriteLine("Error closing remote write stream");
-            }
-            RemoteDisconnected = true;
-            CheckShutdown();
+            outputStream.Dispose();
+        }
+
+        protected override void FinishSendToRemote (Exception ex = null)
+        {
+            outboundChan.Writer.TryComplete(ex);
         }
 
         protected override async void SendToRemote (byte[] buffer)
         {
-            if (remoteConnected)
+            if (outboundChan != null)
             {
-                try
-                {
-                    await networkStream.WriteAsync(buffer, 0, buffer.Length);
-                    await networkStream.FlushAsync();
-                    Recved((ushort)buffer.Length);
-#if YTLOG_VERBOSE
-                    Debug.WriteLine("Sent data" + buffer.Length);
-#endif
-                }
-                catch (Exception)
-                {
-                    Debug.WriteLine("Cannot send to remote");
-                }
-            }
-            else
-            {
-                localbuf.Enqueue(buffer);
-#if YTLOG_VERBOSE
-                Debug.WriteLine("Queued data" + buffer.Length);
-#endif
+                await outboundChan.Writer.WriteAsync(buffer).ConfigureAwait(false);
             }
         }
 
         protected override void CheckShutdown ()
         {
-            networkStream?.Dispose();
-            r?.Dispose();
+            outboundChan = null;
+            try
+            {
+                inputStream?.Dispose();
+            }
+            catch (ObjectDisposedException) { }
+            finally
+            {
+                inputStream = null;
+            }
+            try
+            {
+                outputStream?.Dispose();
+            }
+            catch (ObjectDisposedException) { }
+            finally
+            {
+                outputStream = null;
+            }
+            try
+            {
+                socket?.Dispose();
+            }
+            catch (ObjectDisposedException) { }
+            finally
+            {
+                socket = null;
+            }
             base.CheckShutdown();
         }
+
     }
 }

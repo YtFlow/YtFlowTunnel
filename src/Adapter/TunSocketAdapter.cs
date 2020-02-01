@@ -182,12 +182,12 @@ namespace YtFlow.Tunnel
             _tun.executeLwipTask(() => _socket.Abort());
         }
 
-        public void Recved (ushort len)
+        public void ConfirmRecvFromLocal (ushort len)
         {
             _tun.executeLwipTask(() => _socket.Recved(len));
         }
 
-        public Task FinishRecv ()
+        public Task FinishInbound ()
         {
             pipeWriter.Complete();
             if (pollCancelSource != null || localPendingByteCount != 0)
@@ -197,18 +197,18 @@ namespace YtFlow.Tunnel
             return Task.CompletedTask;
         }
 
-        protected Span<byte> GetSpanForWrite (int sizeHint = 0)
+        protected Span<byte> GetSpanForWriteToLocal (int sizeHint = 0)
         {
             return pipeWriter.GetSpan(sizeHint);
         }
 
-        public Task Flush (int byteCount)
+        public Task FlushToLocal (int byteCount)
         {
             pipeWriter.Advance(byteCount);
             return pipeWriter.FlushAsync().AsTask();
         }
 
-        public Task Write (Span<byte> e)
+        public Task WriteToLocal (Span<byte> e)
         {
             var memory = pipeWriter.GetSpan(e.Length);
             e.CopyTo(memory);

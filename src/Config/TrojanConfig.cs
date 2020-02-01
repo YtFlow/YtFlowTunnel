@@ -46,5 +46,8 @@ namespace YtFlow.Tunnel.Config
 
         [DataMember]
         public string Name { get; set; }
+
+        [DataMember]
+        public bool AllowInsecure { get; set; }
     }
 }
