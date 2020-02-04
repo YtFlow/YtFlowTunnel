@@ -40,7 +40,9 @@ namespace YtFlow.Tunnel.Adapter.Remote
 #else
                 var outLen = cryptor.Encrypt((int)dataPtr, (uint)data.Length, (int)outDataPtr, (uint)outData.Length);
 #endif
+#pragma warning disable IDE0004
                 return (uint)outLen;
+#pragma warning restore IDE0004
             }
         }
 
@@ -53,7 +55,9 @@ namespace YtFlow.Tunnel.Adapter.Remote
 #else
                 var outLen = cryptor.Decrypt((int)dataPtr, (uint)data.Length, (int)outDataPtr, (uint)outData.Length);
 #endif
+#pragma warning disable IDE0004
                 return (uint)outLen;
+#pragma warning restore IDE0004
             }
         }
 
