@@ -4,26 +4,28 @@ using System.IO.Pipelines;
 using System.Threading;
 using System.Threading.Tasks;
 using Wintun2socks;
+using YtFlow.Tunnel.Adapter.Destination;
+using YtFlow.Tunnel.Adapter.Remote;
+using YtFlow.Tunnel.DNS;
 
-namespace YtFlow.Tunnel
+namespace YtFlow.Tunnel.Adapter.Local
 {
-    internal abstract class TunSocketAdapter : IAdapterSocket
+    internal class TunSocketAdapter : ILocalAdapter
     {
         protected TcpSocket _socket;
         protected TunInterface _tun;
         protected PipeReader pipeReader;
         protected PipeWriter pipeWriter;
+        private readonly IRemoteAdapter remoteAdapter;
         private CancellationTokenSource pollCancelSource = new CancellationTokenSource();
         private SemaphoreSlim localStackBufLock = new SemaphoreSlim(1, 1);
         private SemaphoreSlim localWriteFinishLock = new SemaphoreSlim(0, 1);
         private int localStackByteCount = 11680;
         private int localPendingByteCount = 0;
         public int IsShutdown = 0;
-        public event ReadDataHandler ReadData;
-        public event SocketErrorHandler OnError;
-        public event SocketFinishedHandler OnFinished;
+        public Destination.Destination Destination { get; }
 
-        internal TunSocketAdapter (TcpSocket socket, TunInterface tun)
+        internal TunSocketAdapter (TcpSocket socket, TunInterface tun, IRemoteAdapter remoteAdapter)
         {
             var pipe = new Pipe();
             pipeReader = pipe.Reader;
@@ -36,7 +38,40 @@ namespace YtFlow.Tunnel
             socket.SocketError += Socket_SocketError;
             socket.RecvFinished += Socket_RecvFinished;
 
+            // Resolve destination host
+            var domain = DnsProxyServer.Lookup(socket.RemoteAddr);
+            IHost host;
+            if (domain == null)
+            {
+                // TODO: Check if the remote addr falls in our IP range
+                host = new Ipv4Host(socket.RemoteAddr);
+            }
+            else
+            {
+                host = new DomainNameHost(domain);
+            }
+            Destination = new Destination.Destination(host, socket.RemotePort, TransportProtocol.Tcp);
+
             StartPolling();
+            this.remoteAdapter = remoteAdapter;
+            remoteAdapter.Init(this).ContinueWith(async t =>
+            {
+                if (t.IsCanceled || t.IsFaulted)
+                {
+                    DebugLogger.Log($"Error initiating a connection to {Destination}: {t.Exception}");
+                    remoteAdapter.RemoteDisconnected = true;
+                    Reset();
+                    CheckShutdown();
+                }
+                else
+                {
+                    if (DebugLogger.InitNeeded())
+                    {
+                        DebugLogger.Log("Connected: " + Destination.ToString());
+                    }
+                    await StartForward().ConfigureAwait(false);
+                }
+            });
         }
 
         private unsafe Task<byte> SendToSocket (MemoryHandle dataHandle, ushort len, bool more)
@@ -63,7 +98,6 @@ namespace YtFlow.Tunnel
             // read one of them at a time.
             if (!buffer.TryGet(ref start, out var chunk))
             {
-                pipeReader.Complete(new InvalidOperationException("Got an empty segment to write to local"));
                 return false;
             }
             var more = buffer.Length == _localStackByteCount || buffer.Length != chunk.Length;
@@ -84,7 +118,8 @@ namespace YtFlow.Tunnel
             if (writeResult != 0)
             {
                 DebugLogger.Log("Error from writing to local socket:" + writeResult.ToString());
-                OnError?.Invoke(this, writeResult);
+                // TODO: distinguish write error with general socket error
+                Socket_SocketError(_socket, writeResult);
                 return false;
             }
             Interlocked.Add(ref localStackByteCount, -chunk.Length);
@@ -118,13 +153,72 @@ namespace YtFlow.Tunnel
             }
         }
 
+        public async Task StartForward ()
+        {
+            var recvCancel = new CancellationTokenSource();
+            var sendCancel = new CancellationTokenSource();
+            try
+            {
+                await Task.WhenAll(
+                    remoteAdapter.StartRecv(recvCancel.Token).ContinueWith(t =>
+                   {
+                       if (t.IsFaulted)
+                       {
+                           sendCancel.Cancel();
+                           var ex = t.Exception.Flatten().GetBaseException();
+                           DebugLogger.Log($"Recv error: {Destination}: {ex}");
+                       }
+                       return t;
+                   }, recvCancel.Token).Unwrap(),
+                    remoteAdapter.StartSend(sendCancel.Token).ContinueWith(async t =>
+                   {
+                       if (t.IsFaulted)
+                       {
+                           recvCancel.Cancel();
+                           var ex = t.Exception.Flatten().GetBaseException();
+                           DebugLogger.Log($"Send error: {Destination}: {ex}");
+                       }
+                       else if (t.Status == TaskStatus.RanToCompletion)
+                       {
+                           await FinishInbound();
+                       }
+                       return t;
+                   }, sendCancel.Token).Unwrap().Unwrap()
+                ).ConfigureAwait(false);
+                if (DebugLogger.InitNeeded())
+                {
+                    DebugLogger.Log("Close!: " + Destination);
+                }
+                await Close().ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+                // Something wrong happened during recv/send and was handled separatedly.
+                DebugLogger.Log("Reset!: " + Destination);
+                Reset();
+            }
+            finally
+            {
+                if (remoteAdapter != null)
+                {
+                    remoteAdapter.RemoteDisconnected = true;
+                }
+                recvCancel.Dispose();
+                sendCancel.Dispose();
+            }
+            CheckShutdown();
+        }
+
         protected void Socket_SocketError (TcpSocket sender, int err)
         {
             // tcp_pcb has been freed already
             // No need to close
             // Close();
             DebugLogger.Log("Socket error " + err.ToString());
-            OnError?.Invoke(this, err);
+            if (!remoteAdapter.RemoteDisconnected)
+            {
+                remoteAdapter?.FinishSendToRemote(new LwipException(err));
+            }
             if (localWriteFinishLock.CurrentCount == 0)
             {
                 localWriteFinishLock.Release();
@@ -153,13 +247,16 @@ namespace YtFlow.Tunnel
 
         protected void Socket_DataReceived (TcpSocket sender, byte[] bytes)
         {
-            ReadData?.Invoke(this, bytes);
+            remoteAdapter?.SendToRemote(bytes);
         }
 
         private void Socket_RecvFinished (TcpSocket sender)
         {
             // Local FIN recved
-            OnFinished?.Invoke(this);
+            if (remoteAdapter?.RemoteDisconnected == false)
+            {
+                remoteAdapter.FinishSendToRemote();
+            }
         }
 
         public Task Close ()
@@ -197,26 +294,26 @@ namespace YtFlow.Tunnel
             return Task.CompletedTask;
         }
 
-        protected Span<byte> GetSpanForWriteToLocal (int sizeHint = 0)
+        public Span<byte> GetSpanForWriteToLocal (int sizeHint = 0)
         {
             return pipeWriter.GetSpan(sizeHint);
         }
 
-        public Task FlushToLocal (int byteCount)
+        public Task FlushToLocal (int byteCount, CancellationToken cancellationToken = default)
         {
             pipeWriter.Advance(byteCount);
-            return pipeWriter.FlushAsync().AsTask();
+            return pipeWriter.FlushAsync(cancellationToken).AsTask();
         }
 
-        public Task WriteToLocal (Span<byte> e)
+        public Task WriteToLocal (Span<byte> e, CancellationToken cancellationToken = default)
         {
             var memory = pipeWriter.GetSpan(e.Length);
             e.CopyTo(memory);
             pipeWriter.Advance(e.Length);
-            return pipeWriter.FlushAsync().AsTask();
+            return pipeWriter.FlushAsync(cancellationToken).AsTask();
         }
 
-        protected virtual void CheckShutdown ()
+        public virtual void CheckShutdown ()
         {
             _socket.DataReceived -= Socket_DataReceived;
             _socket.DataSent -= Socket_DataSent;
@@ -224,6 +321,14 @@ namespace YtFlow.Tunnel
             _socket.RecvFinished -= Socket_RecvFinished;
             Interlocked.Exchange(ref localStackBufLock, null).Dispose();
             Interlocked.Exchange(ref localWriteFinishLock, null).Dispose();
+            try
+            {
+                remoteAdapter?.CheckShutdown();
+            }
+            catch (Exception ex)
+            {
+                DebugLogger.Log($"Error shutting down a remote adapter to {Destination}: {ex}");
+            }
         }
     }
 }

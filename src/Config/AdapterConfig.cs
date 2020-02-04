@@ -36,7 +36,7 @@ namespace YtFlow.Tunnel.Config
                     throw adapterTypeNotFoundException;
             }
         }
-        internal static IAdapterFactory GetAdapterFactoryFromDefaultFile ()
+        internal static IRemoteAdapterFactory GetAdapterFactoryFromDefaultFile ()
         {
             var config = GetConfigFromFilePath(GetDefaultConfigFilePath());
             switch (config)

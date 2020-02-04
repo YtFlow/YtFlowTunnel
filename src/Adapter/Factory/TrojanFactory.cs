@@ -1,12 +1,12 @@
 ﻿using System;
 using System.Text;
 using Windows.Networking;
-using Wintun2socks;
+using YtFlow.Tunnel.Adapter.Remote;
 using YtFlow.Tunnel.Config;
 
 namespace YtFlow.Tunnel.Adapter.Factory
 {
-    internal class TrojanFactory : IAdapterFactory
+    internal class TrojanFactory : IRemoteAdapterFactory
     {
         private Memory<byte> hashedKey { get; }
         private HostName host { get; }
@@ -25,9 +25,9 @@ namespace YtFlow.Tunnel.Adapter.Factory
             }
             hashedKey = Encoding.ASCII.GetBytes(BitConverter.ToString(keyBuf).Replace("-", string.Empty).ToLower()).AsMemory(0, 56);
         }
-        public TunSocketAdapter CreateAdapter (TcpSocket socket, TunInterface tun)
+        public IRemoteAdapter CreateAdapter ()
         {
-            return new TrojanAdapter(host, serviceName, hashedKey, allowInsecure, socket, tun);
+            return new TrojanAdapter(host, serviceName, hashedKey, allowInsecure);
         }
     }
 }

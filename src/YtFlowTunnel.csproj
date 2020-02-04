@@ -125,17 +125,23 @@
     <RestoreProjectStyle>PackageReference</RestoreProjectStyle>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="Adapter\Destination\Destination.cs" />
+    <Compile Include="Adapter\Destination\DomainNameHost.cs" />
+    <Compile Include="Adapter\Destination\IHost.cs" />
+    <Compile Include="Adapter\Destination\Ipv4Host.cs" />
+    <Compile Include="Adapter\Destination\Ipv6Host.cs" />
+    <Compile Include="Adapter\Destination\TransportProtocol.cs" />
     <Compile Include="Adapter\Factory\TrojanFactory.cs" />
-    <Compile Include="Adapter\Factory\IAdapterFactory.cs" />
+    <Compile Include="Adapter\Factory\IRemoteAdapterFactory.cs" />
     <Compile Include="Adapter\Factory\HttpFactory.cs" />
     <Compile Include="Adapter\Factory\ShadowsocksFactory.cs" />
-    <Compile Include="Adapter\IAdapterSocket.cs" />
+    <Compile Include="Adapter\Local\ILocalAdapter.cs" />
+    <Compile Include="Adapter\Remote\IRemoteAdapter.cs" />
     <Compile Include="Adapter\LwipException.cs" />
-    <Compile Include="Adapter\ProxyAdapter.cs" />
-    <Compile Include="Adapter\HttpAdapter.cs" />
-    <Compile Include="Adapter\TrojanAdapter.cs" />
-    <Compile Include="Adapter\ShadowsocksAdapter.cs" />
-    <Compile Include="Adapter\TunSocketAdapter.cs" />
+    <Compile Include="Adapter\Remote\HttpAdapter.cs" />
+    <Compile Include="Adapter\Remote\TrojanAdapter.cs" />
+    <Compile Include="Adapter\Remote\ShadowsocksAdapter.cs" />
+    <Compile Include="Adapter\Local\TunSocketAdapter.cs" />
     <Compile Include="Config\AdapterConfig.cs" />
     <Compile Include="Config\TrojanConfig.cs" />
     <Compile Include="Config\IAdapterConfig.cs" />

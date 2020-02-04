@@ -15,7 +15,6 @@ namespace YtFlow.Tunnel.DNS
         {
             queryPacket = packet;
 
-            ushort id = (ushort)((packet[0] << 8) | packet[1]);
             int cursor = 12;
             queryStart = cursor;
             byte length = packet[cursor];
@@ -43,7 +42,6 @@ namespace YtFlow.Tunnel.DNS
 
         public byte[] GenerateErrorResponse (ushort flag)
         {
-            var queryLen = queryEnd - queryStart;
             byte[] packet = new byte[queryPacket.Length];
             queryPacket.CopyTo(packet.AsSpan());
             packet[2] = (byte)(flag >> 8);

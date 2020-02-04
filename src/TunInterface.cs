@@ -2,11 +2,11 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices.WindowsRuntime;
-using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using Wintun2socks;
 using YtFlow.Tunnel.Adapter.Factory;
+using YtFlow.Tunnel.Adapter.Local;
 using YtFlow.Tunnel.Config;
 using YtFlow.Tunnel.DNS;
 
@@ -16,7 +16,7 @@ namespace YtFlow.Tunnel
     public sealed class TunInterface
     {
         Channel<Action> taskChannel;
-        List<WeakReference<TunSocketAdapter>> adapters = new List<WeakReference<TunSocketAdapter>>();
+        List<WeakReference<TunSocketAdapter>> tunAdapters = new List<WeakReference<TunSocketAdapter>>();
         Wintun w = Wintun.Instance;
         DnsProxyServer dnsServer = new DnsProxyServer();
         bool running = false;
@@ -98,9 +98,9 @@ namespace YtFlow.Tunnel
                 await Task.Delay(250).ConfigureAwait(false);
                 if (i % 10 == 0)
                 {
-                    adapters.RemoveAll(w => !w.TryGetTarget(out var a) || a.IsShutdown == 1);
+                    tunAdapters.RemoveAll(w => !w.TryGetTarget(out var a) /* TODO: || a.IsShutdown == 1 */);
                     DebugLogger.Log("# of connections in local stack: " + ConnectionCount.ToString());
-                    DebugLogger.Log("# of adapters: " + adapters.Count.ToString());
+                    DebugLogger.Log("# of adapters: " + tunAdapters.Count.ToString());
                 }
             }
         }
@@ -111,7 +111,7 @@ namespace YtFlow.Tunnel
                 return;
             }
             DebugLogger.Log("Tun deinit req");
-            foreach (var weakAdapter in adapters.Where(w => w.TryGetTarget(out var a) && a.IsShutdown != 0))
+            foreach (var weakAdapter in tunAdapters.Where(w => w.TryGetTarget(out var a) /* TODO: && a.IsShutdown != 0 */))
             {
                 try
                 {
@@ -127,7 +127,7 @@ namespace YtFlow.Tunnel
             w.DnsPacketPoped -= W_DnsPacketPoped;
             TcpSocket.EstablishedTcp -= W_EstablishTcp;
 
-            adapters.Clear();
+            tunAdapters.Clear();
             // To avoid problems after reconnecting
             // dnsServer.Clear();
             // dispatchWorker = null;
@@ -151,12 +151,12 @@ namespace YtFlow.Tunnel
             }
         }
 
-        internal static IAdapterFactory adapterFactory { get; set; }
+        internal static IRemoteAdapterFactory adapterFactory { get; set; }
 
         private void W_EstablishTcp (TcpSocket socket)
         {
-            var adapter = adapterFactory.CreateAdapter(socket, this);
-            adapters.Add(new WeakReference<TunSocketAdapter>(adapter));
+            var remoteAdapter = adapterFactory.CreateAdapter();
+            tunAdapters.Add(new WeakReference<TunSocketAdapter>(new TunSocketAdapter(socket, this, remoteAdapter)));
         }
 
         private void W_PopPacket (object sender, byte[] e)
