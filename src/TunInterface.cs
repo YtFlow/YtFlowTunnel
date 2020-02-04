@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Wintun2socks;
 using YtFlow.Tunnel.Adapter.Factory;
 using YtFlow.Tunnel.Adapter.Local;
+using YtFlow.Tunnel.Adapter.Relay;
 using YtFlow.Tunnel.Config;
 using YtFlow.Tunnel.DNS;
 
@@ -15,6 +16,7 @@ namespace YtFlow.Tunnel
     public delegate void PacketPopedHandler (object sender, [ReadOnlyArray] byte[] e);
     public sealed class TunInterface
     {
+        private const uint RELAY_ADDRESS = 0xF0FF11ACu; // 172.17.255.240 in network endianness
         Channel<Action> taskChannel;
         List<WeakReference<TunSocketAdapter>> tunAdapters = new List<WeakReference<TunSocketAdapter>>();
         Wintun w = Wintun.Instance;
@@ -155,8 +157,17 @@ namespace YtFlow.Tunnel
 
         private void W_EstablishTcp (TcpSocket socket)
         {
-            var remoteAdapter = adapterFactory.CreateAdapter();
-            tunAdapters.Add(new WeakReference<TunSocketAdapter>(new TunSocketAdapter(socket, this, remoteAdapter)));
+            if (socket.RemoteAddr == RELAY_ADDRESS && socket.RemotePort == 1080)
+            {
+                var remoteAdapter = adapterFactory.CreateAdapter();
+                var localAdapter = new TunSocketAdapter(socket, this, new Socks5Relay(remoteAdapter));
+                tunAdapters.Add(new WeakReference<TunSocketAdapter>(localAdapter));
+            }
+            else
+            {
+                var remoteAdapter = adapterFactory.CreateAdapter();
+                tunAdapters.Add(new WeakReference<TunSocketAdapter>(new TunSocketAdapter(socket, this, remoteAdapter)));
+            }
         }
 
         private void W_PopPacket (object sender, byte[] e)

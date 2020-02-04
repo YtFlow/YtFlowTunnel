@@ -5,7 +5,7 @@ namespace YtFlow.Tunnel.Adapter.Destination
 {
     internal struct DomainNameHost : IHost
     {
-        private readonly byte[] data;
+        private readonly Memory<byte> data;
         public string DomainName { get; }
         public int Size { get => data.Length; }
 
@@ -15,9 +15,15 @@ namespace YtFlow.Tunnel.Adapter.Destination
             data = Encoding.ASCII.GetBytes(DomainName);
         }
 
+        public DomainNameHost(byte[] domain)
+        {
+            data = domain;
+            DomainName = Encoding.ASCII.GetString(domain);
+        }
+
         public void CopyTo(Span<byte> buffer)
         {
-            data.CopyTo(buffer);
+            data.Span.CopyTo(buffer);
         }
 
         public override string ToString ()

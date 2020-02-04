@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices.WindowsRuntime;
-using System.Text;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
@@ -75,6 +74,15 @@ namespace YtFlow.Tunnel.Adapter.Remote
                     requestPayload[59] = 0x03; //  ATYP
                     requestPayload[60] = (byte)domainHost.Size;
                     domainHost.CopyTo(requestPayload.AsSpan(61, domainHost.Size));
+                    break;
+                case Ipv4Host ipv4:
+                    requestPayload = new byte[firstBuf.Length + 68];
+                    hashedPassword.CopyTo(requestPayload); // hex(SHA224(password))
+                    requestPayload[56] = 0x0D; // CR
+                    requestPayload[57] = 0x0A; // LF
+                    requestPayload[58] = 0x01; //  CMD
+                    requestPayload[59] = 0x01; //  ATYP
+                    ipv4.CopyTo(requestPayload.AsSpan(60, 4));
                     break;
                 default:
                     throw new NotImplementedException("Unimplemented host type: " + destination.Host.ToString());

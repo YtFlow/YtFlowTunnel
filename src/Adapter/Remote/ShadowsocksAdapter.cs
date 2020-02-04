@@ -93,10 +93,15 @@ namespace YtFlow.Tunnel.Adapter.Remote
             switch (destination.Host)
             {
                 case DomainNameHost domainHost:
-                    requestPayload = new byte[firstBuf.Length + domainHost.Size + 4];
+                    requestPayload = new byte[firstBufLen + domainHost.Size + 4];
                     requestPayload[0] = 0x03;
                     requestPayload[1] = (byte)domainHost.Size;
                     domainHost.CopyTo(requestPayload.AsSpan(2));
+                    break;
+                case Ipv4Host ipv4:
+                    requestPayload = new byte[firstBufLen + 7];
+                    requestPayload[0] = 0x01;
+                    ipv4.CopyTo(requestPayload.AsSpan(1, 4));
                     break;
                 default:
                     throw new NotImplementedException("Unimplemented host type: " + destination.Host.ToString());
