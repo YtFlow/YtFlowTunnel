@@ -86,7 +86,7 @@ namespace YtFlow.Tunnel
             {
                 return realInitNeeded;
             }
-            realInitNeeded = debugSocket != null && IsDebugAddrSet();
+            realInitNeeded = debugSocket == null && IsDebugAddrSet();
             initNeeded = realInitNeeded;
             return realInitNeeded;
         }
@@ -112,6 +112,7 @@ namespace YtFlow.Tunnel
             finally
             {
                 debugSocket = null;
+                initNeeded = null;
             }
         }
 
@@ -120,7 +121,9 @@ namespace YtFlow.Tunnel
             return RealResetLoggers().AsAsyncAction();
         }
 
+#pragma warning disable CS1998
         private static async Task RealLogPacketWithTimestamp (byte[] b)
+#pragma warning restore CS1998
         {
 #if YTLOG_VERBOSE
             var socket = debugSocket;
@@ -163,7 +166,16 @@ namespace YtFlow.Tunnel
             {
                 return Task.CompletedTask;
             }
-            return debugSocket.OutputStream?.WriteAsync(Encoding.UTF8.GetBytes(message).AsBuffer())?.AsTask() ?? Task.CompletedTask;
+            try
+            {
+                return debugSocket.OutputStream?.WriteAsync(Encoding.UTF8.GetBytes(message).AsBuffer())?.AsTask() ?? Task.CompletedTask;
+            }
+            catch (InvalidOperationException)
+            {
+                debugSocket = null;
+                initNeeded = null;
+                return Task.CompletedTask;
+            }
         }
 
         public static void Log (string message)

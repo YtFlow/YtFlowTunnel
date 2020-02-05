@@ -9,28 +9,34 @@ using YtFlow.Tunnel.Adapter.Local;
 
 namespace YtFlow.Tunnel.Adapter.Remote
 {
-    internal sealed class ShadowsocksAdapter : IRemoteAdapter
+    internal class ShadowsocksAdapter : IRemoteAdapter
     {
-        private const int RECV_BUFFER_LEN = 4096;
-        private const int SEND_BUFFER_LEN = 4096;
-        private readonly string server;
-        private readonly int port;
-        private TcpClient client = new TcpClient(AddressFamily.InterNetwork)
+        protected const int RECV_BUFFER_LEN = 4096;
+        protected virtual int sendBufferLen => 4096;
+        protected readonly string server;
+        protected readonly int port;
+        protected TcpClient client = new TcpClient(AddressFamily.InterNetwork)
         {
             NoDelay = true,
             ReceiveTimeout = 20,
             SendTimeout = 20
         };
-        private NetworkStream networkStream;
-        private ILocalAdapter localAdapter;
-        private Channel<byte[]> outboundChan = Channel.CreateUnbounded<byte[]>(new UnboundedChannelOptions()
+        protected NetworkStream networkStream;
+        protected ILocalAdapter localAdapter;
+        protected Channel<byte[]> outboundChan = Channel.CreateUnbounded<byte[]>(new UnboundedChannelOptions()
         {
             SingleReader = true
         });
-        private ICryptor cryptor = null;
+        protected ICryptor cryptor = null;
         public bool RemoteDisconnected { get; set; } = false;
 
-        public unsafe uint Encrypt (ReadOnlySpan<byte> data, Span<byte> outData)
+        /// <summary>
+        /// Encrypt input data using the cryptor. Will be used to send Shadowsocks requests.
+        /// </summary>
+        /// <param name="data">Input data.</param>
+        /// <param name="outData">Output data. Must have enough capacity to hold encrypted data and any additional data.</param>
+        /// <returns>The length of <paramref name="outData"/> used.</returns>
+        public virtual unsafe uint Encrypt (ReadOnlySpan<byte> data, Span<byte> outData)
         {
             fixed (byte* dataPtr = &data.GetPinnableReference(), outDataPtr = &outData.GetPinnableReference())
             {
@@ -46,7 +52,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
             }
         }
 
-        public unsafe uint Decrypt (Span<byte> data, Span<byte> outData)
+        public unsafe uint Decrypt (ReadOnlySpan<byte> data, Span<byte> outData)
         {
             fixed (byte* dataPtr = &data.GetPinnableReference(), outDataPtr = &outData.GetPinnableReference())
             {
@@ -70,17 +76,6 @@ namespace YtFlow.Tunnel.Adapter.Remote
 
         public async Task Init (ILocalAdapter localAdapter)
         {
-            /*
-            var header = new byte[7];
-            header[0] = 0x01;
-            header[1] = (byte)(_socket.RemoteAddr & 0xFF);
-            header[2] = (byte)(_socket.RemoteAddr >> 8 & 0xFF);
-            header[3] = (byte)(_socket.RemoteAddr >> 16 & 0xFF);
-            header[4] = (byte)(_socket.RemoteAddr >> 24);
-            header[5] = (byte)(_socket.RemotePort >> 8);
-            header[6] = (byte)(_socket.RemotePort & 0xFF);
-            */
-
             // No way to pass a cancellationToken in.
             // See https://github.com/dotnet/runtime/issues/921
             this.localAdapter = localAdapter;
@@ -113,8 +108,9 @@ namespace YtFlow.Tunnel.Adapter.Remote
             requestPayload[requestPayload.Length - firstBufLen - 2] = (byte)(destination.Port >> 8);
             requestPayload[requestPayload.Length - firstBufLen - 1] = (byte)(destination.Port & 0xFF);
             firstBuf.CopyTo(requestPayload.AsSpan(requestPayload.Length - firstBufLen));
-            var encryptedFirstSeg = new byte[requestPayload.Length + 16]; // Reserve space for IV
-            var encryptedFirstSegLen = Encrypt(requestPayload, encryptedFirstSeg);
+            var encryptedFirstSeg = new byte[requestPayload.Length + 66]; // Reserve space for IV or salt + 2 * tag + size
+            var ivLen = Encrypt(Array.Empty<byte>(), encryptedFirstSeg); // Fill IV/salt first
+            var encryptedFirstSegLen = ivLen + Encrypt(requestPayload, encryptedFirstSeg.AsSpan((int)ivLen));
 
             await connectTask;
             networkStream = client.GetStream();
@@ -127,7 +123,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
             //await networkWriteStream.FlushAsync();
         }
 
-        public async Task StartRecv (CancellationToken cancellationToken = default)
+        public virtual async Task StartRecv (CancellationToken cancellationToken = default)
         {
             byte[] buf = new byte[RECV_BUFFER_LEN];
             while (client.Connected && networkStream.CanRead)
@@ -155,19 +151,20 @@ namespace YtFlow.Tunnel.Adapter.Remote
             }
         }
 
-        public async Task StartSend (CancellationToken cancellationToken)
+        public async Task StartSend (CancellationToken cancellationToken = default)
         {
-            byte[] buf = new byte[SEND_BUFFER_LEN];
+            byte[] buf = new byte[sendBufferLen + 34]; // dataLen + 2 * tag + data
             while (await outboundChan.Reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
             {
                 outboundChan.Reader.TryRead(out var data);
                 var offset = 0;
                 while (offset < data.Length)
                 {
-                    var len = Encrypt(data.AsSpan().Slice(offset, Math.Min(data.Length - offset, SEND_BUFFER_LEN)), buf);
-                    offset += (int)len;
+                    var inDataLen = Math.Min(data.Length - offset, sendBufferLen);
+                    var outDataLen = Encrypt(data.AsSpan().Slice(offset, inDataLen), buf);
+                    offset += inDataLen;
                     // TODO: batch write
-                    await networkStream.WriteAsync(buf, 0, (int)len, cancellationToken).ConfigureAwait(false);
+                    await networkStream.WriteAsync(buf, 0, (int)outDataLen, cancellationToken).ConfigureAwait(false);
                 }
                 // await networkStream.FlushAsync();
                 localAdapter.ConfirmRecvFromLocal((ushort)data.Length);

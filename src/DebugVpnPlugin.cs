@@ -158,6 +158,7 @@ namespace YtFlow.Tunnel
             {
                 State = VpnPluginState.Disconnected;
                 var _ = DebugLogger.ResetLoggers();
+                DebugLogger.initNeeded = null;
             }
         }
 

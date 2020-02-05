@@ -138,9 +138,11 @@
     <Compile Include="Adapter\Local\ILocalAdapter.cs" />
     <Compile Include="Adapter\Relay\DirectRelay.cs" />
     <Compile Include="Adapter\Relay\Socks5Relay.cs" />
+    <Compile Include="Adapter\Remote\AeadOperationException.cs" />
     <Compile Include="Adapter\Remote\IRemoteAdapter.cs" />
     <Compile Include="Adapter\LwipException.cs" />
     <Compile Include="Adapter\Remote\HttpAdapter.cs" />
+    <Compile Include="Adapter\Remote\ShadowsocksAeadAdapter.cs" />
     <Compile Include="Adapter\Remote\TrojanAdapter.cs" />
     <Compile Include="Adapter\Remote\ShadowsocksAdapter.cs" />
     <Compile Include="Adapter\Local\TunSocketAdapter.cs" />

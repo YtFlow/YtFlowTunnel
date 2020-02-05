@@ -9,14 +9,28 @@ namespace YtFlow.Tunnel.Adapter.Factory
     {
         private ShadowsocksConfig config { get; }
         private CryptorFactory cryptorFactory { get; }
+        private bool isAead = false;
         public ShadowsocksFactory (ShadowsocksConfig config)
         {
             this.config = config;
+            var lowerMethod = config.Method.ToLower();
+            if (lowerMethod.EndsWith("gcm") || lowerMethod == "chacha20-ietf-poly1305")
+            {
+                isAead = true;
+            }
             cryptorFactory = new CryptorFactory(config.Method, Encoding.UTF8.GetBytes(config.Password));
         }
+
         public IRemoteAdapter CreateAdapter ()
         {
-            return new ShadowsocksAdapter(config.ServerHost, config.ServerPort, cryptorFactory.CreateCryptor());
+            if (isAead)
+            {
+                return new ShadowsocksAeadAdapter(config.ServerHost, config.ServerPort, cryptorFactory.CreateCryptor());
+            }
+            else
+            {
+                return new ShadowsocksAdapter(config.ServerHost, config.ServerPort, cryptorFactory.CreateCryptor());
+            }
         }
     }
 }

@@ -93,41 +93,48 @@ namespace YtFlow.Tunnel.Adapter.Local
             {
                 await localStackBufLock.WaitAsync(pollCancelSource.Token).ConfigureAwait(false);
             }
+            byte writeResult = 0;
             var start = buffer.Start;
             // A buffer may consist of several Memory<byte> chunks,
             // read one of them at a time.
-            if (!buffer.TryGet(ref start, out var chunk))
+            // Note that a chunk may be large, thus must be splitted into smaller chunks.
+            while (buffer.TryGet(ref start, out var remainingChunk))
             {
-                return false;
-            }
-            var more = buffer.Length == _localStackByteCount || buffer.Length != chunk.Length;
-            byte writeResult;
-            using (var dataHandle = chunk.Pin())
-            {
-                writeResult = await SendToSocket(dataHandle, (ushort)chunk.Length, more);
-                while (writeResult == 255)
+                while (remainingChunk.Length > 0)
                 {
-                    if (!await (localStackBufLock?.WaitAsync(3000, pollCancelSource.Token).ConfigureAwait(false) ?? Task.FromResult(false).ConfigureAwait(false)))
+                    var len = Math.Min(_localStackByteCount, remainingChunk.Length);
+                    var chunk = remainingChunk.Slice(0, len);
+                    remainingChunk = remainingChunk.Slice(len);
+                    var more = remainingChunk.Length != 0 || !start.Equals(buffer.End);
+                    using (var dataHandle = chunk.Pin())
                     {
-                        DebugLogger.Log("Local write timeout");
-                        break;
+                        writeResult = await SendToSocket(dataHandle, (ushort)chunk.Length, more);
+                        while (writeResult == 255)
+                        {
+                            if (!await (localStackBufLock?.WaitAsync(10000, pollCancelSource.Token).ConfigureAwait(false) ?? Task.FromResult(false).ConfigureAwait(false)))
+                            {
+                                DebugLogger.Log("Local write timeout");
+                                break;
+                            }
+                            writeResult = await SendToSocket(dataHandle, (ushort)chunk.Length, more);
+                        }
                     }
-                    writeResult = await SendToSocket(dataHandle, (ushort)chunk.Length, more);
+                    if (writeResult != 0)
+                    {
+                        DebugLogger.Log("Error from writing to local socket:" + writeResult.ToString());
+                        // TODO: distinguish write error with general socket error
+                        Socket_SocketError(_socket, writeResult);
+                        return false;
+                    }
+                    Interlocked.Add(ref localStackByteCount, -chunk.Length);
+                    Interlocked.Add(ref localPendingByteCount, chunk.Length);
+                    await _tun.executeLwipTask(() => _socket.Output());
                 }
             }
-            if (writeResult != 0)
-            {
-                DebugLogger.Log("Error from writing to local socket:" + writeResult.ToString());
-                // TODO: distinguish write error with general socket error
-                Socket_SocketError(_socket, writeResult);
-                return false;
-            }
-            Interlocked.Add(ref localStackByteCount, -chunk.Length);
-            Interlocked.Add(ref localPendingByteCount, chunk.Length);
-            pipeReader.AdvanceTo(buffer.GetPosition(chunk.Length));
-            // await _tun.executeLwipTask(() => _socket.Output());
+            pipeReader.AdvanceTo(buffer.End);
+            await _tun.executeLwipTask(() => _socket.Output());
 
-            if (readResult.IsCanceled || (readResult.IsCompleted && chunk.Length == buffer.Length) || writeResult != 0 || pollCancelSource.IsCancellationRequested)
+            if (readResult.IsCanceled || readResult.IsCompleted || writeResult != 0 || pollCancelSource.IsCancellationRequested)
             {
                 return false;
             }
@@ -215,11 +222,11 @@ namespace YtFlow.Tunnel.Adapter.Local
             // No need to close
             // Close();
             DebugLogger.Log("Socket error " + err.ToString());
-            if (!remoteAdapter.RemoteDisconnected)
+            if (remoteAdapter?.RemoteDisconnected == false)
             {
                 remoteAdapter?.FinishSendToRemote(new LwipException(err));
             }
-            if (localWriteFinishLock.CurrentCount == 0)
+            if (localWriteFinishLock?.CurrentCount == 0)
             {
                 localWriteFinishLock.Release();
             }
