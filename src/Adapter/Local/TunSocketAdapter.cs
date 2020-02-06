@@ -87,12 +87,6 @@ namespace YtFlow.Tunnel.Adapter.Local
         {
             var readResult = await pipeReader.ReadAsync(pollCancelSource.Token).ConfigureAwait(false);
             var buffer = readResult.Buffer;
-            int _localStackByteCount;
-            // Wait until there is enough space in the stack
-            while ((_localStackByteCount = localStackByteCount) <= 1600)
-            {
-                await localStackBufLock.WaitAsync(pollCancelSource.Token).ConfigureAwait(false);
-            }
             byte writeResult = 0;
             var start = buffer.Start;
             // A buffer may consist of several Memory<byte> chunks,
@@ -102,7 +96,12 @@ namespace YtFlow.Tunnel.Adapter.Local
             {
                 while (remainingChunk.Length > 0)
                 {
-                    var len = Math.Min(_localStackByteCount, remainingChunk.Length);
+                    // Wait until there is enough space in the stack
+                    while (localStackByteCount <= 1600)
+                    {
+                        await localStackBufLock.WaitAsync(pollCancelSource.Token).ConfigureAwait(false);
+                    }
+                    var len = Math.Min(localStackByteCount, remainingChunk.Length);
                     var chunk = remainingChunk.Slice(0, len);
                     remainingChunk = remainingChunk.Slice(len);
                     var more = remainingChunk.Length != 0 || !start.Equals(buffer.End);
