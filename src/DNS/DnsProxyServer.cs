@@ -1,7 +1,8 @@
 ﻿using System;
-using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace YtFlow.Tunnel.DNS
@@ -67,15 +68,16 @@ namespace YtFlow.Tunnel.DNS
     }
     internal class DnsProxyServer
     {
-        private static ConcurrentDictionary<uint, string> lookupTable = new ConcurrentDictionary<uint, string>();
-        private static ConcurrentDictionary<string, uint> rlookupTable = new ConcurrentDictionary<string, uint>();
+        private static Dictionary<uint, string> lookupTable = new Dictionary<uint, string>();
+        private static Dictionary<string, uint> rlookupTable = new Dictionary<string, uint>();
+        private static SemaphoreSlim dnsLock = new SemaphoreSlim(1, 1);
 
         public void Clear ()
         {
             lookupTable.Clear();
         }
 
-        private async Task<byte[]> Query (
+        private async Task<byte[]> RealQueryAsync (
             byte[] payload)
         {
             var dnsPacket = new DnsPacket(payload);
@@ -92,14 +94,8 @@ namespace YtFlow.Tunnel.DNS
             else
             {
                 uint ip = (uint)((172 << 24) | (17 << 16) | lookupTable.Count);
-                while (!lookupTable.TryAdd(ip, n))
-                {
-                    ip = (uint)((172 << 24) | (17 << 16) | lookupTable.Count);
-                }
-                if (!rlookupTable.TryAdd(n, ip))
-                {
-                    return dnsPacket.GenerateErrorResponse(0x8002); // Server failure
-                }
+                lookupTable[ip] = n;
+                rlookupTable[n] = ip;
                 DebugLogger.Log("DNS request done: " + n);
                 return dnsPacket.GenerateAnswerResponse(ip);
             }
@@ -115,11 +111,19 @@ namespace YtFlow.Tunnel.DNS
             return ret;
         }
 
-        public Task<byte[]> QueryAsync (
+        public async Task<byte[]> QueryAsync (
             [ReadOnlyArray]
             byte[] payload)
         {
-            return Query(payload);
+            await dnsLock.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                return await RealQueryAsync(payload).ConfigureAwait(false);
+            }
+            finally
+            {
+                dnsLock.Release();
+            }
         }
     }
 }

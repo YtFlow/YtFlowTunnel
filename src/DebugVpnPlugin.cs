@@ -50,16 +50,16 @@ namespace YtFlow.Tunnel
                 DebugLogger.Log("Config read, binding endpoint");
                 if (!transport.BindEndpointAsync(new HostName("127.0.0.1"), "9007").AsTask().ContinueWith(t =>
                 {
-                    if (t.IsCompleted)
+                    if (t.IsFaulted || t.IsCanceled)
+                    {
+                        DebugLogger.Log("Error binding endpoint: " + t.Exception.ToString());
+                        return false;
+                    }
+                    else
                     {
                         DebugLogger.Log("Binded");
                         return true;
                     }
-                    else if (t.IsFaulted)
-                    {
-                        DebugLogger.Log("Error binding endpoint: " + t.Exception.ToString());
-                    }
-                    return false;
                 }).Result)
                 {
                     return;
@@ -76,16 +76,16 @@ namespace YtFlow.Tunnel
                 DebugLogger.Log("Connecting to local packet processor");
                 if (!transport.ConnectAsync(new HostName("127.0.0.1"), rport).AsTask().ContinueWith(t =>
                 {
-                    if (t.IsCompleted)
-                    {
-                        DebugLogger.Log("Local packet processor connected");
-                        return true;
-                    }
-                    else if (t.IsFaulted)
+                    if (t.IsFaulted || t.IsCanceled)
                     {
                         channel.TerminateConnection("Error connecting to local packet processor: " + t.Exception.ToString());
+                        DebugLogger.Log("Local packet processor connected");
+                        return false;
                     }
-                    return false;
+                    else
+                    {
+                        return true;
+                    }
                 }).Result)
                 {
                     return;
@@ -164,8 +164,8 @@ namespace YtFlow.Tunnel
 
         public void GetKeepAlivePayload (VpnChannel channel, out VpnPacketBuffer keepAlivePacket)
         {
-            //// Not needed
-            keepAlivePacket = new VpnPacketBuffer(null, 0, 0);
+            /// Not needed
+            keepAlivePacket = null;
         }
 
         public void Encapsulate (VpnChannel channel, VpnPacketBufferList packets, VpnPacketBufferList encapulatedPackets)

@@ -107,7 +107,7 @@ namespace YtFlow.Tunnel.Adapter.Local
                     var more = remainingChunk.Length != 0 || !start.Equals(buffer.End);
                     using (var dataHandle = chunk.Pin())
                     {
-                        writeResult = await SendToSocket(dataHandle, (ushort)chunk.Length, more);
+                        writeResult = await SendToSocket(dataHandle, (ushort)chunk.Length, more).ConfigureAwait(false);
                         while (writeResult == 255)
                         {
                             if (!await (localStackBufLock?.WaitAsync(10000, pollCancelSource.Token).ConfigureAwait(false) ?? Task.FromResult(false).ConfigureAwait(false)))
@@ -115,7 +115,7 @@ namespace YtFlow.Tunnel.Adapter.Local
                                 DebugLogger.Log("Local write timeout");
                                 break;
                             }
-                            writeResult = await SendToSocket(dataHandle, (ushort)chunk.Length, more);
+                            writeResult = await SendToSocket(dataHandle, (ushort)chunk.Length, more).ConfigureAwait(false);
                         }
                     }
                     if (writeResult != 0)
@@ -148,6 +148,10 @@ namespace YtFlow.Tunnel.Adapter.Local
                 while (await PollOne().ConfigureAwait(false)) { }
             }
             catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                DebugLogger.Log("Poll error: " + ex.ToString());
+            }
             finally
             {
                 Interlocked.Exchange(ref pollCancelSource, null).Dispose();

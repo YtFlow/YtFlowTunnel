@@ -101,8 +101,11 @@ namespace YtFlow.Tunnel
                 if (i % 10 == 0)
                 {
                     tunAdapters.RemoveAll(w => !w.TryGetTarget(out var a) /* TODO: || a.IsShutdown == 1 */);
-                    DebugLogger.Log("# of connections in local stack: " + ConnectionCount.ToString());
-                    DebugLogger.Log("# of adapters: " + tunAdapters.Count.ToString());
+                    if (DebugLogger.InitNeeded())
+                    {
+                        DebugLogger.Log("# of connections in local stack: " + ConnectionCount.ToString());
+                        DebugLogger.Log("# of adapters: " + tunAdapters.Count.ToString());
+                    }
                 }
             }
         }
@@ -142,15 +145,8 @@ namespace YtFlow.Tunnel
 
         private async void W_DnsPacketPoped (object sender, byte[] e, uint addr, ushort port)
         {
-            try
-            {
-                var res = await dnsServer.QueryAsync(e).ConfigureAwait(false);
-                await executeLwipTask(() => w.PushDnsPayload(addr, port, res)).ConfigureAwait(false);
-            }
-            catch (Exception)
-            {
-                // DNS timeout?
-            }
+            var res = await dnsServer.QueryAsync(e).ConfigureAwait(false);
+            await executeLwipTask(() => w.PushDnsPayload(addr, port, res)).ConfigureAwait(false);
         }
 
         internal static IRemoteAdapterFactory adapterFactory { get; set; }
@@ -172,14 +168,19 @@ namespace YtFlow.Tunnel
 
         private void W_PopPacket (object sender, byte[] e)
         {
-            var _ = DebugLogger.LogPacketWithTimestamp(e);
+            if (DebugLogger.InitNeeded())
+            {
+                var _ = DebugLogger.LogPacketWithTimestamp(e);
+            }
             PacketPoped?.Invoke(sender, e);
         }
 
         public async void PushPacket ([ReadOnlyArray] byte[] packet)
         {
-            /*if (dispatchQ.Count < 100)*/
-            var _ = DebugLogger.LogPacketWithTimestamp(packet);
+            if (DebugLogger.InitNeeded())
+            {
+                var _ = DebugLogger.LogPacketWithTimestamp(packet);
+            }
             byte ret = await executeLwipTask(() => w.PushPacket(packet)).ConfigureAwait(false);
         }
 
