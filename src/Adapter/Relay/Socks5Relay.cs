@@ -105,7 +105,6 @@ namespace YtFlow.Tunnel.Adapter.Relay
 
             var request = await requestTcs.Task.ConfigureAwait(false);
             _destination = ParseDestinationFromSocks5Request(request);
-            ConfirmRecvFromLocal((ushort)request.Length);
             await WriteToLocal(DummyResponsePayload);
 
             await base.Init(localAdapter).ConfigureAwait(false);
