@@ -134,7 +134,9 @@ namespace YtFlow.Tunnel
             }
             catch (Exception ex)
             {
-                channel.TerminateConnection("Error connecting to VPN tunnel: " + ex.ToString());
+                var msg = "Error connecting to VPN tunnel: " + ex.ToString();
+                channel.TerminateConnection(msg);
+                DebugLogger.Log(msg);
                 State = VpnPluginState.Disconnected;
             }
         }

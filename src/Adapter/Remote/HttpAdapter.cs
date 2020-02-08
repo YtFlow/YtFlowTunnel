@@ -50,10 +50,6 @@ namespace YtFlow.Tunnel.Adapter.Remote
 
             // Connect and perform handshake
             await connectTask;
-            if (DebugLogger.InitNeeded())
-            {
-                DebugLogger.Log("Connected: " + destination.ToString());
-            }
             networkStream = client.GetStream();
             await networkStream.WriteAsync(firstSeg, 0, headerLen).ConfigureAwait(false);
             byte[] responseBuf = new byte[HEAD_BUFFER_LEN];

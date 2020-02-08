@@ -65,7 +65,7 @@ namespace YtFlow.Tunnel.Adapter.Local
                 }
                 else
                 {
-                    if (DebugLogger.InitNeeded())
+                    if (DebugLogger.LogNeeded())
                     {
                         DebugLogger.Log("Connected: " + Destination.ToString());
                     }
@@ -170,7 +170,7 @@ namespace YtFlow.Tunnel.Adapter.Local
             try
             {
                 await Task.WhenAll(
-                    remoteAdapter.StartRecv(recvCancel.Token).ContinueWith(t =>
+                    remoteAdapter.StartRecv(recvCancel.Token).ContinueWith(async t =>
                    {
                        if (t.IsFaulted)
                        {
@@ -178,9 +178,13 @@ namespace YtFlow.Tunnel.Adapter.Local
                            var ex = t.Exception.Flatten().GetBaseException();
                            DebugLogger.Log($"Recv error: {Destination}: {ex}");
                        }
+                       else if (t.Status == TaskStatus.RanToCompletion)
+                       {
+                           await FinishInbound().ConfigureAwait(false);
+                       }
                        return t;
-                   }, recvCancel.Token).Unwrap(),
-                    remoteAdapter.StartSend(sendCancel.Token).ContinueWith(async t =>
+                   }, recvCancel.Token).Unwrap().Unwrap(),
+                    remoteAdapter.StartSend(sendCancel.Token).ContinueWith(t =>
                    {
                        if (t.IsFaulted)
                        {
@@ -188,14 +192,10 @@ namespace YtFlow.Tunnel.Adapter.Local
                            var ex = t.Exception.Flatten().GetBaseException();
                            DebugLogger.Log($"Send error: {Destination}: {ex}");
                        }
-                       else if (t.Status == TaskStatus.RanToCompletion)
-                       {
-                           await FinishInbound();
-                       }
                        return t;
-                   }, sendCancel.Token).Unwrap().Unwrap()
+                   }, sendCancel.Token).Unwrap()
                 ).ConfigureAwait(false);
-                if (DebugLogger.InitNeeded())
+                if (DebugLogger.LogNeeded())
                 {
                     DebugLogger.Log("Close!: " + Destination);
                 }

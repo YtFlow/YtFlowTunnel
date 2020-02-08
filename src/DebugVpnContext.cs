@@ -1,6 +1,8 @@
 ﻿using System;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.InteropServices.WindowsRuntime;
+using Windows.Networking;
 using Windows.Networking.Sockets;
 
 namespace YtFlow.Tunnel
@@ -50,25 +52,36 @@ namespace YtFlow.Tunnel
         }
         public void Stop ()
         {
-            // s.Dispose();
+            // s?.Dispose();
+            // s = null;
             u?.Dispose();
             u = null;
             tun?.Deinit();
         }
 
         private IPEndPoint pluginEndpoint = new IPEndPoint(new IPAddress(new byte[] { 127, 0, 0, 1 }), 9007);
+
         private void Tun_PacketPoped (object sender, byte[] e)
         {
-            // var _ = s.OutputStream.WriteAsync(e.AsBuffer());
+            try
+            {
+                // await s?.OutputStream.WriteAsync(e.AsBuffer());
+            }
+            catch (Exception ex)
+            {
+                DebugLogger.Log("Error popping a packet: " + ex.ToString());
+            }
             u?.SendAsync(e, e.Length, pluginEndpoint);
         }
 
         private void S_MessageReceived (DatagramSocket sender, DatagramSocketMessageReceivedEventArgs args)
         {
-            var reader = args.GetDataReader();
-            byte[] b = new byte[reader.UnconsumedBufferLength];
-            reader.ReadBytes(b);
-            tun.PushPacket(b);
+            using (var reader = args.GetDataReader())
+            {
+                byte[] b = new byte[reader.UnconsumedBufferLength];
+                reader.ReadBytes(b);
+                tun?.PushPacket(b);
+            }
         }
     }
 }

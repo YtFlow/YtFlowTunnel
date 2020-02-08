@@ -101,7 +101,7 @@ namespace YtFlow.Tunnel
                 if (i % 10 == 0)
                 {
                     tunAdapters.RemoveAll(w => !w.TryGetTarget(out var a) /* TODO: || a.IsShutdown == 1 */);
-                    if (DebugLogger.InitNeeded())
+                    if (DebugLogger.LogNeeded())
                     {
                         DebugLogger.Log("# of connections in local stack: " + ConnectionCount.ToString());
                         DebugLogger.Log("# of adapters: " + tunAdapters.Count.ToString());
@@ -168,7 +168,7 @@ namespace YtFlow.Tunnel
 
         private void W_PopPacket (object sender, byte[] e)
         {
-            if (DebugLogger.InitNeeded())
+            if (DebugLogger.LogNeeded())
             {
                 var _ = DebugLogger.LogPacketWithTimestamp(e);
             }
@@ -177,7 +177,7 @@ namespace YtFlow.Tunnel
 
         public async void PushPacket ([ReadOnlyArray] byte[] packet)
         {
-            if (DebugLogger.InitNeeded())
+            if (DebugLogger.LogNeeded())
             {
                 var _ = DebugLogger.LogPacketWithTimestamp(packet);
             }

@@ -91,6 +91,11 @@ namespace YtFlow.Tunnel
             return realInitNeeded;
         }
 
+        public static bool LogNeeded ()
+        {
+            return debugSocket != null;
+        }
+
         private static async Task RealResetLoggers ()
         {
             Logger = (_) => { };
