@@ -18,8 +18,6 @@ namespace YtFlow.Tunnel.Adapter.Remote
         protected TcpClient client = new TcpClient(AddressFamily.InterNetwork)
         {
             NoDelay = true,
-            ReceiveTimeout = 20,
-            SendTimeout = 20
         };
         protected NetworkStream networkStream;
         protected ILocalAdapter localAdapter;
@@ -141,6 +139,10 @@ namespace YtFlow.Tunnel.Adapter.Remote
         public void FinishSendToRemote (Exception ex = null)
         {
             outboundChan.Writer.TryComplete(ex);
+            if (ex != null)
+            {
+                client.Client.Dispose();
+            }
         }
 
         public async void SendToRemote (byte[] buffer)
@@ -170,7 +172,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
                 localAdapter.ConfirmRecvFromLocal((ushort)data.Length);
             }
             await networkStream.FlushAsync(cancellationToken).ConfigureAwait(false);
-            client.Client.Shutdown(SocketShutdown.Send);
+            client.Dispose();
         }
 
         public void CheckShutdown ()

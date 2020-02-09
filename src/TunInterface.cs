@@ -97,16 +97,17 @@ namespace YtFlow.Tunnel
                     w.CheckTimeout();
                     return 0;
                 }).ConfigureAwait(false);
-                await Task.Delay(250).ConfigureAwait(false);
                 if (i % 10 == 0)
                 {
                     tunAdapters.RemoveAll(w => !w.TryGetTarget(out var a) /* TODO: || a.IsShutdown == 1 */);
                     if (DebugLogger.LogNeeded())
                     {
-                        DebugLogger.Log("# of connections in local stack: " + ConnectionCount.ToString());
-                        DebugLogger.Log("# of adapters: " + tunAdapters.Count.ToString());
+                        DebugLogger.Log("# of connections in local stack: " + ConnectionCount);
+                        DebugLogger.Log($"# of open/all adapters: {TunSocketAdapter.OpenCount} {tunAdapters.Count}");
+                        DebugLogger.Log($"# of recv/send: {TunSocketAdapter.RecvingCount} {TunSocketAdapter.SendingCount}");
                     }
                 }
+                await Task.Delay(250).ConfigureAwait(false);
             }
         }
         public async void Deinit ()

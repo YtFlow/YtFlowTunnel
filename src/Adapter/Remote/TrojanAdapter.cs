@@ -143,9 +143,18 @@ namespace YtFlow.Tunnel.Adapter.Remote
             socket.Dispose();
         }
 
-        public void FinishSendToRemote (Exception ex = null)
+        public async void FinishSendToRemote (Exception ex = null)
         {
             outboundChan.Writer.TryComplete(ex);
+            if (ex != null && socket != null)
+            {
+                try
+                {
+                    await socket.CancelIOAsync().AsTask().ConfigureAwait(false);
+                    socket.Dispose();
+                }
+                catch (ObjectDisposedException) { }
+            }
         }
 
         public async void SendToRemote (byte[] buffer)

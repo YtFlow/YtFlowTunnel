@@ -25,8 +25,13 @@ namespace YtFlow.Tunnel.Adapter.Local
         public int IsShutdown = 0;
         public Destination.Destination Destination { get; }
 
+        public static int OpenCount = 0;
+        public static int RecvingCount = 0;
+        public static int SendingCount = 0;
+
         internal TunSocketAdapter (TcpSocket socket, TunInterface tun, IRemoteAdapter remoteAdapter)
         {
+            Interlocked.Increment(ref OpenCount);
             var pipe = new Pipe();
             pipeReader = pipe.Reader;
             pipeWriter = pipe.Writer;
@@ -169,23 +174,33 @@ namespace YtFlow.Tunnel.Adapter.Local
             var sendCancel = new CancellationTokenSource();
             try
             {
+                Interlocked.Increment(ref RecvingCount);
+                Interlocked.Increment(ref SendingCount);
                 await Task.WhenAll(
                     remoteAdapter.StartRecv(recvCancel.Token).ContinueWith(async t =>
                    {
+                       Interlocked.Decrement(ref RecvingCount);
+                       sendCancel.Cancel();
                        if (t.IsFaulted)
                        {
-                           sendCancel.Cancel();
                            var ex = t.Exception.Flatten().GetBaseException();
                            DebugLogger.Log($"Recv error: {Destination}: {ex}");
+                           throw ex;
                        }
                        else if (t.Status == TaskStatus.RanToCompletion)
                        {
+                           // Remote has closed the connection
                            await FinishInbound().ConfigureAwait(false);
+                           if (DebugLogger.LogNeeded())
+                           {
+                               DebugLogger.Log("Close!: " + Destination);
+                           }
+                           await Close().ConfigureAwait(false);
                        }
-                       return t;
-                   }, recvCancel.Token).Unwrap().Unwrap(),
+                   }).Unwrap(),
                     remoteAdapter.StartSend(sendCancel.Token).ContinueWith(t =>
                    {
+                       Interlocked.Decrement(ref SendingCount);
                        if (t.IsFaulted)
                        {
                            recvCancel.Cancel();
@@ -193,15 +208,11 @@ namespace YtFlow.Tunnel.Adapter.Local
                            DebugLogger.Log($"Send error: {Destination}: {ex}");
                        }
                        return t;
-                   }, sendCancel.Token).Unwrap()
+                   }).Unwrap()
                 ).ConfigureAwait(false);
-                if (DebugLogger.LogNeeded())
-                {
-                    DebugLogger.Log("Close!: " + Destination);
-                }
-                await Close().ConfigureAwait(false);
             }
-            catch (Exception)
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
             {
                 // Something wrong happened during recv/send and was handled separatedly.
                 DebugLogger.Log("Reset!: " + Destination);
@@ -233,7 +244,6 @@ namespace YtFlow.Tunnel.Adapter.Local
             {
                 localWriteFinishLock.Release();
             }
-            // IsShutdown = 1;
         }
 
         protected void Socket_DataSent (TcpSocket sender, ushort length, ushort buflen)
@@ -325,6 +335,7 @@ namespace YtFlow.Tunnel.Adapter.Local
 
         public virtual void CheckShutdown ()
         {
+            Interlocked.Decrement(ref OpenCount);
             _socket.DataReceived -= Socket_DataReceived;
             _socket.DataSent -= Socket_DataSent;
             _socket.SocketError -= Socket_SocketError;

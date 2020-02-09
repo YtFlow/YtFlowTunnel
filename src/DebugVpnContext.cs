@@ -47,7 +47,11 @@ namespace YtFlow.Tunnel
                     var recv = await u.ReceiveAsync().ConfigureAwait(false);
                     tun?.PushPacket(recv.Buffer);
                 }
-                catch (Exception) { break; }
+                catch (ObjectDisposedException) { }
+                catch (Exception ex)
+                {
+                    DebugLogger.Log("Error receiving from packet processor: " + ex.ToString());
+                }
             }
         }
         public void Stop ()

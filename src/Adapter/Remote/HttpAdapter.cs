@@ -16,7 +16,10 @@ namespace YtFlow.Tunnel.Adapter.Remote
         private readonly int port;
         private const int RECV_BUFFER_LEN = 1024;
         private const int HEAD_BUFFER_LEN = 100;
-        private TcpClient client = new TcpClient(AddressFamily.InterNetwork);
+        private TcpClient client = new TcpClient(AddressFamily.InterNetwork)
+        {
+            NoDelay = true
+        };
         private NetworkStream networkStream;
         private ILocalAdapter localAdapter;
         private Channel<byte[]> outboundChan = Channel.CreateUnbounded<byte[]>(new UnboundedChannelOptions()
@@ -99,11 +102,16 @@ namespace YtFlow.Tunnel.Adapter.Remote
             {
                 var _ = localAdapter.WriteToLocal(responseBuf.AsSpan(headerStart, responseLen));
             }
+            client.NoDelay = false;
         }
 
         public void FinishSendToRemote (Exception ex = null)
         {
             outboundChan.Writer.TryComplete(ex);
+            if (ex != null)
+            {
+                client.Client.Dispose();
+            }
         }
 
         public async void SendToRemote (byte[] buffer)
