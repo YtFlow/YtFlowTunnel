@@ -26,9 +26,6 @@ namespace YtFlow.Tunnel.Adapter.Relay
         private Socks5ClientRequestStatus clientRequestStatus = Socks5ClientRequestStatus.None;
         private readonly TaskCompletionSource<byte[]> greetingTcs = new TaskCompletionSource<byte[]>();
         private readonly TaskCompletionSource<byte[]> requestTcs = new TaskCompletionSource<byte[]>();
-        private Destination.Destination _destination;
-
-        public override Destination.Destination Destination { get => _destination; }
 
         public Socks5Relay (IRemoteAdapter remoteAdapter) : base(remoteAdapter)
         {
@@ -67,15 +64,7 @@ namespace YtFlow.Tunnel.Adapter.Relay
                     // Some SOCKS5 clients (e.g. curl) can resolve IP addresses locally.
                     // In this case, we got a fake IP address and need to
                     // convert it back to the corresponding domain name.
-                    string domain = DnsProxyServer.Lookup(ipBe);
-                    if (domain == null)
-                    {
-                        host = new Ipv4Host(ipBe);
-                    }
-                    else
-                    {
-                        host = new DomainNameHost(domain);
-                    }
+                    host = DnsProxyServer.TryLookup(ipBe);
                     break;
                 case 3:
                     var len = payload[4];
@@ -104,7 +93,7 @@ namespace YtFlow.Tunnel.Adapter.Relay
             await WriteToLocal(ServerChoicePayload);
 
             var request = await requestTcs.Task.ConfigureAwait(false);
-            _destination = ParseDestinationFromSocks5Request(request);
+            Destination = ParseDestinationFromSocks5Request(request);
             await WriteToLocal(DummyResponsePayload);
 
             await base.Init(localAdapter).ConfigureAwait(false);

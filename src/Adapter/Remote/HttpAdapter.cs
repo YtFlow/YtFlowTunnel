@@ -155,5 +155,15 @@ namespace YtFlow.Tunnel.Adapter.Remote
             networkStream?.Dispose();
             client?.Dispose();
         }
+
+        public Task StartRecvPacket (CancellationToken cancellationToken = default)
+        {
+            throw new NotImplementedException();
+        }
+
+        public void SendPacketToRemote (byte[] data, Destination.Destination destination)
+        {
+            throw new NotImplementedException();
+        }
     }
 }

@@ -165,6 +165,16 @@ namespace YtFlow.Tunnel.Adapter.Remote
             }
         }
 
+        public Task StartRecvPacket (CancellationToken cancellationToken = default)
+        {
+            throw new NotImplementedException();
+        }
+
+        public void SendPacketToRemote (byte[] data, Destination.Destination destination)
+        {
+            throw new NotImplementedException();
+        }
+
         public void CheckShutdown ()
         {
             outboundChan = null;
@@ -188,6 +198,5 @@ namespace YtFlow.Tunnel.Adapter.Remote
             socket = null;
             localAdapter = null;
         }
-
     }
 }

@@ -48,7 +48,7 @@ namespace YtFlow.Tunnel
                 }
 #endif
                 DebugLogger.Log("Config read, binding endpoint");
-                if (!transport.BindEndpointAsync(new HostName("127.0.0.1"), "9007").AsTask().ContinueWith(t =>
+                if (!transport.BindEndpointAsync(new HostName("127.0.0.1"), string.Empty).AsTask().ContinueWith(t =>
                 {
                     if (t.IsFaulted || t.IsCanceled)
                     {
@@ -65,14 +65,13 @@ namespace YtFlow.Tunnel
                     return;
                 }
                 DebugLogger.Log("Endpoint binded, init context");
-                context.Init();
+                var rport = context.Init(int.Parse(transport.Information.LocalPort)).ToString();
                 DebugLogger.Log("Context initialized");
                 /* var rport = context.Init(transport.Information.LocalPort, str =>
                 {
                     LogLine(str, channel);
                     return null;
                 }); */
-                var rport = "9008";
                 DebugLogger.Log("Connecting to local packet processor");
                 if (!transport.ConnectAsync(new HostName("127.0.0.1"), rport).AsTask().ContinueWith(t =>
                 {
@@ -98,10 +97,6 @@ namespace YtFlow.Tunnel
                 };
 
                 var inclusionRoutes = routeScope.Ipv4InclusionRoutes;
-                // myip.ipip.net
-                //inclusionRoutes.Add(new VpnRoute(new HostName("36.99.18.134"), 32));
-                // qzworld.net
-                //inclusionRoutes.Add(new VpnRoute(new HostName("188.166.248.242"), 32));
                 // DNS server
                 inclusionRoutes.Add(new VpnRoute(new HostName("1.1.1.1"), 32));
                 // main CIDR

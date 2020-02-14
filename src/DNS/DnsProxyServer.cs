@@ -1,9 +1,11 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Net;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using YtFlow.Tunnel.Adapter.Destination;
 
 namespace YtFlow.Tunnel.DNS
 {
@@ -72,12 +74,12 @@ namespace YtFlow.Tunnel.DNS
         private static Dictionary<string, uint> rlookupTable = new Dictionary<string, uint>();
         private static SemaphoreSlim dnsLock = new SemaphoreSlim(1, 1);
 
-        public void Clear ()
+        public static void Clear ()
         {
             lookupTable.Clear();
         }
 
-        private async Task<byte[]> RealQueryAsync (
+        private static async Task<byte[]> RealQueryAsync (
             byte[] payload)
         {
             var dnsPacket = new DnsPacket(payload);
@@ -101,17 +103,42 @@ namespace YtFlow.Tunnel.DNS
             }
         }
 
-        public static string Lookup (uint ip)
+        public static string Lookup (uint ipInNetworkEndianness)
         {
-            uint value = ip << 24
-                | (ip << 8 & 0x00FF0000)
-                | (ip >> 8 & 0x0000FF00)
-                | ip >> 24;
+            var value = (uint)IPAddress.NetworkToHostOrder((int)ipInNetworkEndianness);
             lookupTable.TryGetValue(value, out var ret);
             return ret;
         }
 
-        public async Task<byte[]> QueryAsync (
+        public static IHost TryLookup (uint ipInNetworkEndianness)
+        {
+            var domain = Lookup(ipInNetworkEndianness);
+            if (domain == null)
+            {
+                return new Ipv4Host(ipInNetworkEndianness);
+            }
+            else
+            {
+                return new DomainNameHost(domain);
+            }
+        }
+
+        internal static bool ReverseQuery (string domain, out Ipv4Host host)
+        {
+            if (rlookupTable.TryGetValue(domain, out var value))
+            {
+                // TODO: what if the IP address falls in fake IP range?
+                host = new Ipv4Host((uint)IPAddress.HostToNetworkOrder((int)value));
+                return true;
+            }
+            else
+            {
+                host = default;
+                return false;
+            }
+        }
+
+        public static async Task<byte[]> QueryAsync (
             [ReadOnlyArray]
             byte[] payload)
         {

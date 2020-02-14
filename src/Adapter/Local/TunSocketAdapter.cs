@@ -23,7 +23,7 @@ namespace YtFlow.Tunnel.Adapter.Local
         private int localStackByteCount = 11680;
         private int localPendingByteCount = 0;
         public int IsShutdown = 0;
-        public Destination.Destination Destination { get; }
+        public Destination.Destination Destination { get; set; }
 
         public static int OpenCount = 0;
         public static int RecvingCount = 0;
@@ -205,14 +205,17 @@ namespace YtFlow.Tunnel.Adapter.Local
                        {
                            recvCancel.Cancel();
                            var ex = t.Exception.Flatten().GetBaseException();
-                           DebugLogger.Log($"Send error: {Destination}: {ex}");
+                           if (!(ex is LwipException lwipEx) || lwipEx.LwipCode != -14) // lwIP Reset
+                           {
+                               DebugLogger.Log($"Send error: {Destination}: {ex}");
+                           }
                        }
                        return t;
                    }).Unwrap()
                 ).ConfigureAwait(false);
             }
             catch (OperationCanceledException) { }
-            catch (Exception ex)
+            catch (Exception)
             {
                 // Something wrong happened during recv/send and was handled separatedly.
                 DebugLogger.Log("Reset!: " + Destination);
@@ -342,14 +345,7 @@ namespace YtFlow.Tunnel.Adapter.Local
             _socket.RecvFinished -= Socket_RecvFinished;
             Interlocked.Exchange(ref localStackBufLock, null).Dispose();
             Interlocked.Exchange(ref localWriteFinishLock, null).Dispose();
-            try
-            {
-                remoteAdapter?.CheckShutdown();
-            }
-            catch (Exception ex)
-            {
-                DebugLogger.Log($"Error shutting down a remote adapter to {Destination}: {ex}");
-            }
+            remoteAdapter?.CheckShutdown();
         }
     }
 }

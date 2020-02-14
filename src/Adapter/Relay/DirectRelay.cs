@@ -17,7 +17,11 @@ namespace YtFlow.Tunnel.Adapter.Relay
         }
 
         #region LocalAdapter
-        public virtual Destination.Destination Destination => localAdapter.Destination;
+        public virtual Destination.Destination Destination
+        {
+            get => localAdapter.Destination;
+            set => localAdapter.Destination = value;
+        }
 
         public void CheckShutdown ()
         {
@@ -87,6 +91,16 @@ namespace YtFlow.Tunnel.Adapter.Relay
         public Task StartSend (CancellationToken cancellationToken = default)
         {
             return remoteAdapter.StartSend(cancellationToken);
+        }
+
+        public Task StartRecvPacket (CancellationToken cancellationToken = default)
+        {
+            return remoteAdapter.StartRecvPacket(cancellationToken);
+        }
+
+        public void SendPacketToRemote (byte[] data, Destination.Destination destination)
+        {
+            remoteAdapter.SendPacketToRemote(data, destination);
         }
         #endregion
     }

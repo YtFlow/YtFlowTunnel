@@ -10,9 +10,11 @@ namespace YtFlow.Tunnel.Adapter.Remote
         bool RemoteDisconnected { get; set; }
         Task Init (ILocalAdapter localAdapter);
         Task StartRecv (CancellationToken cancellationToken = default);
+        Task StartRecvPacket (CancellationToken cancellationToken = default);
         Task StartSend (CancellationToken cancellationToken = default);
         void FinishSendToRemote (Exception ex = null);
         void SendToRemote (byte[] buffer);
+        void SendPacketToRemote (byte[] data, Destination.Destination destination);
         void CheckShutdown ();
     }
 }

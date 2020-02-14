@@ -6,7 +6,7 @@ namespace YtFlow.Tunnel.Adapter.Local
 {
     internal interface ILocalAdapter
     {
-        Destination.Destination Destination { get; }
+        Destination.Destination Destination { get; set; }
         void Reset ();
         void CheckShutdown ();
         void ConfirmRecvFromLocal (ushort bytesToConfirm);

@@ -2,6 +2,8 @@
 using System.Threading;
 using System.Threading.Tasks;
 using YtCrypto;
+using YtFlow.Tunnel.Adapter.Destination;
+using YtFlow.Tunnel.Adapter.Factory;
 
 namespace YtFlow.Tunnel.Adapter.Remote
 {
@@ -10,7 +12,6 @@ namespace YtFlow.Tunnel.Adapter.Remote
         private const int TAG_SIZE = 16;
         private const int SIZE_MASK = 0x3fff;
         private const int READ_SIZE_SIZE = TAG_SIZE + 2;
-        private byte[] lenData = new byte[2];
         protected override int sendBufferLen => SIZE_MASK;
 
         public ShadowsocksAeadAdapter (string server, int port, ICryptor cryptor) : base(server, port, cryptor)
@@ -18,7 +19,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
 
         }
 
-        public unsafe int RealEncrypt (ReadOnlySpan<byte> data, Span<byte> tag, Span<byte> outData)
+        public static unsafe int RealEncrypt (ReadOnlySpan<byte> data, Span<byte> tag, Span<byte> outData, ICryptor cryptor)
         {
             fixed (byte* dataPtr = &data.GetPinnableReference(), tagPtr = &tag.GetPinnableReference(), outDataPtr = &outData.GetPinnableReference())
             {
@@ -41,22 +42,34 @@ namespace YtFlow.Tunnel.Adapter.Remote
         /// </summary>
         /// <param name="data">Input data.</param>
         /// <param name="outData">Output data. Must have enough capacity to hold encrypted data, tags and additional data.</param>
+        /// <param name="cryptor">The cryptor to used. A null value indicates that the connection-wide cryptor should be used.</param>
         /// <returns>The length of <paramref name="outData"/> used.</returns>
-        public override uint Encrypt (ReadOnlySpan<byte> data, Span<byte> outData)
+        public override uint Encrypt (ReadOnlySpan<byte> data, Span<byte> outData, ICryptor cryptor = null)
         {
+            if (cryptor == null)
+            {
+                cryptor = this.cryptor;
+            }
             if (data.Length == 0)
             {
                 // First chunk, fill IV/salt only
-                return (uint)RealEncrypt(Array.Empty<byte>(), Array.Empty<byte>(), outData);
+                return (uint)RealEncrypt(Array.Empty<byte>(), Array.Empty<byte>(), outData, cryptor);
             }
+            Span<byte> lenData = stackalloc byte[2];
             lenData[0] = (byte)(data.Length >> 8);
             lenData[1] = (byte)(data.Length & 0xFF);
-            var encryptedLenSize = RealEncrypt(lenData, outData.Slice(2, TAG_SIZE), outData.Slice(0, 2)) + TAG_SIZE;
-            var dataLenSize = RealEncrypt(data, outData.Slice(encryptedLenSize + data.Length, TAG_SIZE), outData.Slice(encryptedLenSize, data.Length)) + TAG_SIZE;
+            var encryptedLenSize = RealEncrypt(lenData, outData.Slice(2, TAG_SIZE), outData.Slice(0, 2), cryptor) + TAG_SIZE;
+            var dataLenSize = RealEncrypt(data, outData.Slice(encryptedLenSize + data.Length, TAG_SIZE), outData.Slice(encryptedLenSize, data.Length), cryptor) + TAG_SIZE;
             return (uint)(encryptedLenSize + dataLenSize);
         }
 
-        public unsafe int Decrypt (ReadOnlySpan<byte> data, ReadOnlySpan<byte> tag, Span<byte> outData)
+        public override uint EncryptAll (ReadOnlySpan<byte> data, Span<byte> outData, ICryptor cryptor = null)
+        {
+            var len = data.Length;
+            return (uint)RealEncrypt(data, outData.Slice(len, TAG_SIZE), outData.Slice(0, len), cryptor) + TAG_SIZE;
+        }
+
+        public static unsafe int Decrypt (ReadOnlySpan<byte> data, ReadOnlySpan<byte> tag, Span<byte> outData, ICryptor cryptor)
         {
             fixed (byte* dataPtr = &data.GetPinnableReference(), tagPtr = &tag.GetPinnableReference(), outDataPtr = &outData.GetPinnableReference())
             {
@@ -104,7 +117,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
             {
                 return;
             }
-            Decrypt(dataBuffer.AsSpan(0, ivLen), Array.Empty<byte>(), Array.Empty<byte>());
+            Decrypt(dataBuffer.AsSpan(0, ivLen), Array.Empty<byte>(), Array.Empty<byte>(), cryptor);
             readSize -= ivLen;
             if (readSize > 0)
             {
@@ -121,7 +134,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
                 {
                     break;
                 }
-                Decrypt(dataBuffer.AsSpan(0, 2), dataBuffer.AsSpan(2, TAG_SIZE), sizeBuffer);
+                Decrypt(dataBuffer.AsSpan(0, 2), dataBuffer.AsSpan(2, TAG_SIZE), sizeBuffer, cryptor);
                 size = sizeBuffer[0] << 8 | sizeBuffer[1];
                 currentChunkSize = READ_SIZE_SIZE + size + TAG_SIZE;
 
@@ -134,7 +147,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
                 {
                     break;
                 }
-                Decrypt(dataBuffer.AsSpan(READ_SIZE_SIZE, size), dataBuffer.AsSpan(READ_SIZE_SIZE + size, TAG_SIZE), localAdapter.GetSpanForWriteToLocal(size));
+                Decrypt(dataBuffer.AsSpan(READ_SIZE_SIZE, size), dataBuffer.AsSpan(READ_SIZE_SIZE + size, TAG_SIZE), localAdapter.GetSpanForWriteToLocal(size), cryptor);
 
                 // Copy remaining data to the front
                 if (readSize > currentChunkSize)
@@ -147,5 +160,48 @@ namespace YtFlow.Tunnel.Adapter.Remote
                 await localAdapter.FlushToLocal(size, cancellationToken).ConfigureAwait(false);
             }
         }
+
+        public async override Task StartRecvPacket (CancellationToken cancellationToken = default)
+        {
+            var outDataBuffer = new byte[sendBufferLen + 66];
+            while (!cancellationToken.IsCancellationRequested && udpClient != null)
+            {
+                var result = await udpClient.ReceiveAsync().ConfigureAwait(false);
+                var cryptor = ShadowsocksFactory.GlobalCryptorFactory.CreateCryptor();
+                var buffer = result.Buffer;
+                var ivLen = (int)cryptor.IvLen;
+                if (buffer.Length < ivLen + TAG_SIZE + 7)
+                {
+                    continue;
+                }
+
+                int decDataLen;
+                try
+                {
+                    decDataLen = Decrypt(buffer.AsSpan(0, buffer.Length - TAG_SIZE), buffer.AsSpan(buffer.Length - TAG_SIZE, TAG_SIZE), outDataBuffer, cryptor);
+                }
+                catch (AeadOperationException ex)
+                {
+                    if (DebugLogger.LogNeeded())
+                    {
+                        DebugLogger.Log($"Error decrypting a UDP packet from {localAdapter.Destination}: {ex}");
+                    }
+                    continue;
+                }
+                // TODO: support IPv6/domain name address type
+                if (decDataLen < 7 || outDataBuffer[0] != 1)
+                {
+                    continue;
+                }
+
+                var headerLen = ParseAddressHeader(outDataBuffer.AsSpan(0, decDataLen), out _, TransportProtocol.Udp);
+                if (headerLen <= 0)
+                {
+                    continue;
+                }
+                await localAdapter.WriteToLocal(outDataBuffer.AsSpan(headerLen, decDataLen - headerLen), cancellationToken).ConfigureAwait(false);
+            }
+        }
+
     }
 }

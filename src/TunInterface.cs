@@ -9,7 +9,6 @@ using YtFlow.Tunnel.Adapter.Factory;
 using YtFlow.Tunnel.Adapter.Local;
 using YtFlow.Tunnel.Adapter.Relay;
 using YtFlow.Tunnel.Config;
-using YtFlow.Tunnel.DNS;
 
 namespace YtFlow.Tunnel
 {
@@ -17,11 +16,10 @@ namespace YtFlow.Tunnel
     public sealed class TunInterface
     {
         private const uint RELAY_ADDRESS = 0xF0FF11ACu; // 172.17.255.240 in network endianness
-        Channel<Action> taskChannel;
-        List<WeakReference<TunSocketAdapter>> tunAdapters = new List<WeakReference<TunSocketAdapter>>();
-        Wintun w = Wintun.Instance;
-        DnsProxyServer dnsServer = new DnsProxyServer();
-        bool running = false;
+        private Channel<Action> taskChannel;
+        private readonly List<WeakReference<TunSocketAdapter>> tunAdapters = new List<WeakReference<TunSocketAdapter>>();
+        internal Wintun wintun = Wintun.Instance;
+        private bool running = false;
         public event PacketPopedHandler PacketPoped;
 
         internal bool executeLwipTask (Action act)
@@ -83,18 +81,17 @@ namespace YtFlow.Tunnel
             });
             var _ = Task.Run(() => doWork());
 
-            w.PacketPoped += W_PopPacket;
-            w.DnsPacketPoped += W_DnsPacketPoped;
+            wintun.PacketPoped += W_PopPacket;
             TcpSocket.EstablishedTcp += W_EstablishTcp;
 
-            w.Init();
+            wintun.Init();
             int i = 0;
             while (running)
             {
                 i++;
                 await executeLwipTask(() =>
                 {
-                    w.CheckTimeout();
+                    wintun.CheckTimeout();
                     return 0;
                 }).ConfigureAwait(false);
                 if (i % 10 == 0)
@@ -110,6 +107,7 @@ namespace YtFlow.Tunnel
                 await Task.Delay(250).ConfigureAwait(false);
             }
         }
+
         public async void Deinit ()
         {
             if (!running)
@@ -127,10 +125,10 @@ namespace YtFlow.Tunnel
                 catch (Exception) { }
             }
 
+            TunDatagramAdapter.socketMap.Clear();
             await Task.Delay(300).ConfigureAwait(false);
-            w.Deinit();
-            w.PacketPoped -= W_PopPacket;
-            w.DnsPacketPoped -= W_DnsPacketPoped;
+            wintun.Deinit();
+            wintun.PacketPoped -= W_PopPacket;
             TcpSocket.EstablishedTcp -= W_EstablishTcp;
 
             tunAdapters.Clear();
@@ -142,12 +140,6 @@ namespace YtFlow.Tunnel
             // debugSocket?.Dispose();
             // debugSocket = null;
             DebugLogger.initNeeded = null;
-        }
-
-        private async void W_DnsPacketPoped (object sender, byte[] e, uint addr, ushort port)
-        {
-            var res = await dnsServer.QueryAsync(e).ConfigureAwait(false);
-            await executeLwipTask(() => w.PushDnsPayload(addr, port, res)).ConfigureAwait(false);
         }
 
         internal static IRemoteAdapterFactory adapterFactory { get; set; }
@@ -178,11 +170,40 @@ namespace YtFlow.Tunnel
 
         public async void PushPacket ([ReadOnlyArray] byte[] packet)
         {
+            // Packets must contain valid IPv4 headers
+            if (packet.Length < 20 || packet[0] >> 4 != 4)
+            {
+                return;
+            }
+            var proto = packet[9];
+            switch (proto)
+            {
+                case 6: // TCP
+                    break;
+                case 17: // UDP
+                    break;
+                default:
+                    return;
+            }
             if (DebugLogger.LogNeeded())
             {
                 var _ = DebugLogger.LogPacketWithTimestamp(packet);
             }
-            byte ret = await executeLwipTask(() => w.PushPacket(packet)).ConfigureAwait(false);
+            if (proto == 6)
+            {
+                byte ret = await executeLwipTask(() => wintun.PushPacket(packet)).ConfigureAwait(false);
+            }
+            else
+            {
+                try
+                {
+                    TunDatagramAdapter.ProcessIpPayload(packet, this);
+                }
+                catch (Exception ex)
+                {
+                    DebugLogger.Log("Error processing udp ip packet: " + ex.ToString());
+                }
+            }
         }
 
         public ulong ConnectionCount { get => TcpSocket.ConnectionCount(); }

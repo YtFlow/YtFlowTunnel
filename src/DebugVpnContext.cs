@@ -12,24 +12,23 @@ namespace YtFlow.Tunnel
         // private DatagramSocket s;
         private UdpClient u;
         private TunInterface tun;
-        private readonly string port;
+        private int tunEndpoint;
+        private IPEndPoint pluginEndpoint = new IPEndPoint(new IPAddress(new byte[] { 127, 0, 0, 1 }), 9007);
 
-        public DebugVpnContext () : this("9008")
-        {
-
-        }
-        public DebugVpnContext (string port)
+        public DebugVpnContext ()
         {
 #if !YT_MOCK
             tun = new TunInterface();
             tun.PacketPoped += Tun_PacketPoped;
-            this.port = port;
 #endif
         }
-        public void Init ()
+        public int Init (int pluginPort)
         {
+            u = new UdpClient();
+            u.Client.Bind(new IPEndPoint(pluginEndpoint.Address, 0));
+            tunEndpoint = ((IPEndPoint)u.Client.LocalEndPoint).Port;
 #if !YT_MOCK
-            u = new UdpClient(int.Parse(port));
+            pluginEndpoint.Port = pluginPort;
             // s = new DatagramSocket();
             // s.MessageReceived += S_MessageReceived;
             // s.BindEndpointAsync(new HostName("127.0.0.1"), port).AsTask().Wait();
@@ -37,6 +36,7 @@ namespace YtFlow.Tunnel
             tun?.Init();
             StartRecv();
 #endif
+            return tunEndpoint;
         }
         private async void StartRecv ()
         {
@@ -62,8 +62,6 @@ namespace YtFlow.Tunnel
             u = null;
             tun?.Deinit();
         }
-
-        private IPEndPoint pluginEndpoint = new IPEndPoint(new IPAddress(new byte[] { 127, 0, 0, 1 }), 9007);
 
         private void Tun_PacketPoped (object sender, byte[] e)
         {
