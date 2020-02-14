@@ -59,8 +59,9 @@ namespace YtFlow.Tunnel.Adapter.Local
         public async Task StartForward ()
         {
             var recvCancel = new CancellationTokenSource();
+            var sendCancel = new CancellationTokenSource();
             var timeoutCancel = new CancellationTokenSource();
-            _ = Task.Run(async () =>
+            var _timeoutTask = Task.Run(async () =>
               {
                   while (secondsTicked < TIMEOUT)
                   {
@@ -69,22 +70,48 @@ namespace YtFlow.Tunnel.Adapter.Local
                   }
                   if (remoteAdapter?.RemoteDisconnected == false)
                   {
+                      sendCancel?.Cancel();
                       recvCancel?.Cancel();
                       remoteAdapter.FinishSendToRemote();
                   }
               });
             try
             {
-                await remoteAdapter.StartRecvPacket(recvCancel.Token).ConfigureAwait(false);
-                if (DebugLogger.LogNeeded())
+                await Task.WhenAll(remoteAdapter.StartRecvPacket(recvCancel.Token).ContinueWith(t =>
                 {
-                    DebugLogger.Log("Close!: " + Destination);
-                }
+                    sendCancel?.Cancel();
+                    timeoutCancel?.Cancel();
+                    if (t.IsFaulted)
+                    {
+                        var ex = t.Exception.Flatten().GetBaseException();
+                        DebugLogger.Log($"Recv error: {Destination}: {ex}");
+                    }
+                    else if (t.Status == TaskStatus.RanToCompletion)
+                    {
+                        if (DebugLogger.LogNeeded())
+                        {
+                            DebugLogger.Log("Close!: " + Destination);
+                        }
+                    }
+                    return t;
+                }).Unwrap(), remoteAdapter.StartSend(sendCancel.Token).ContinueWith(t =>
+                {
+                    if (t.IsFaulted)
+                    {
+                        recvCancel?.Cancel();
+                        timeoutCancel?.Cancel();
+                        var ex = t.Exception.Flatten().GetBaseException();
+                        if (!(ex is LwipException lwipEx) || lwipEx.LwipCode != -14) // lwIP Reset
+                        {
+                            DebugLogger.Log($"Send error: {Destination}: {ex}");
+                        }
+                    }
+                    return t;
+                }).Unwrap()).ConfigureAwait(false);
             }
             catch (OperationCanceledException) { }
-            catch (Exception ex)
+            catch (Exception)
             {
-                DebugLogger.Log($"Recv error: {Destination}: {ex}");
                 DebugLogger.Log("Reset!: " + Destination);
                 Reset();
             }
@@ -103,7 +130,7 @@ namespace YtFlow.Tunnel.Adapter.Local
 
         public void ConfirmRecvFromLocal (ushort bytesToConfirm)
         {
-            throw UdpMethodNotSupported;
+            // throw UdpMethodNotSupported;
         }
 
         public Task FinishInbound ()

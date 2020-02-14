@@ -1,5 +1,7 @@
 ﻿using System;
+using System.Buffers;
 using System.Collections.Generic;
+using System.IO;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Threading;
 using System.Threading.Channels;
@@ -19,6 +21,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
     internal sealed class TrojanAdapter : IRemoteAdapter
     {
         private const int RECV_BUFFER_LEN = 4096;
+        private static ArrayPool<byte> sendArrayPool = ArrayPool<byte>.Create();
         private readonly HostName server;
         private string port;
         private readonly Memory<byte> hashedPassword;
@@ -26,7 +29,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
         private StreamSocket socket = new StreamSocket();
         private IInputStream inputStream;
         private IOutputStream outputStream;
-        private Channel<byte[]> outboundChan = Channel.CreateUnbounded<byte[]>(new UnboundedChannelOptions()
+        private Channel<(byte[] Data, int Size)> outboundChan = Channel.CreateUnbounded<(byte[] Data, int Size)>(new UnboundedChannelOptions()
         {
             SingleReader = true
         });
@@ -39,6 +42,39 @@ namespace YtFlow.Tunnel.Adapter.Remote
             this.port = port;
             this.hashedPassword = hashedPassword;
             this.allowInsecure = allowInsecure;
+        }
+
+        public int FillTrojanRequest (Span<byte> data, Destination.Destination destination, bool isUdpPayload = false, ushort udpPayloadSize = 0)
+        {
+            Span<byte> crlf = stackalloc byte[2];
+            crlf[0] = 0x0D;
+            crlf[1] = 0x0A;
+            int len = 0;
+            if (!isUdpPayload)
+            {
+                hashedPassword.Span.CopyTo(data);
+                len += hashedPassword.Length;
+                crlf.CopyTo(data.Slice(len, 2));
+                len += crlf.Length;
+                switch (destination.TransportProtocol)
+                {
+                    case TransportProtocol.Tcp:
+                        data[len++] = 1;
+                        break;
+                    case TransportProtocol.Udp:
+                        data[len++] = 3;
+                        break;
+                }
+            }
+            len += destination.FillSocks5StyleAddress(data.Slice(len));
+            if (isUdpPayload)
+            {
+                data[len++] = (byte)(udpPayloadSize >> 8);
+                data[len++] = (byte)(udpPayloadSize & 0xFF);
+            }
+            crlf.CopyTo(data.Slice(len));
+            len += 2;
+            return len;
         }
 
         public async Task Init (ILocalAdapter localAdapter)
@@ -57,47 +93,37 @@ namespace YtFlow.Tunnel.Adapter.Remote
 
             var destination = localAdapter.Destination;
             byte[] firstBuf = Array.Empty<byte>();
-            if (await outboundChan.Reader.WaitToReadAsync().ConfigureAwait(false))
-            {
-                outboundChan.Reader.TryRead(out firstBuf);
-            }
             int firstBufLen = firstBuf.Length;
-            byte[] requestPayload;
-            switch (destination.Host)
+            var firstBufCancel = new CancellationTokenSource(500);
+            try
             {
-                case DomainNameHost domainHost:
-                    requestPayload = new byte[firstBuf.Length + domainHost.Size + 65];
-                    hashedPassword.CopyTo(requestPayload); // hex(SHA224(password))
-                    requestPayload[56] = 0x0D; // CR
-                    requestPayload[57] = 0x0A; // LF
-                    requestPayload[58] = 0x01; //  CMD
-                    requestPayload[59] = 0x03; //  ATYP
-                    requestPayload[60] = (byte)domainHost.Size;
-                    domainHost.CopyTo(requestPayload.AsSpan(61, domainHost.Size));
-                    break;
-                case Ipv4Host ipv4:
-                    requestPayload = new byte[firstBuf.Length + 68];
-                    hashedPassword.CopyTo(requestPayload); // hex(SHA224(password))
-                    requestPayload[56] = 0x0D; // CR
-                    requestPayload[57] = 0x0A; // LF
-                    requestPayload[58] = 0x01; //  CMD
-                    requestPayload[59] = 0x01; //  ATYP
-                    ipv4.CopyTo(requestPayload.AsSpan(60, 4));
-                    break;
-                default:
-                    throw new NotImplementedException("Unimplemented host type: " + destination.Host.ToString());
-
+                if (await outboundChan.Reader.WaitToReadAsync(firstBufCancel.Token).ConfigureAwait(false))
+                {
+                    outboundChan.Reader.TryRead(out var tuple);
+                    firstBuf = tuple.Data;
+                    firstBufLen = tuple.Size;
+                }
             }
-            requestPayload[requestPayload.Length - firstBufLen - 4] = (byte)(destination.Port >> 8);
-            requestPayload[requestPayload.Length - firstBufLen - 3] = (byte)(destination.Port & 0xFF);
-            requestPayload[requestPayload.Length - firstBufLen - 2] = 0x0D;
-            requestPayload[requestPayload.Length - firstBufLen - 1] = 0x0A;
-            firstBuf.CopyTo(requestPayload.AsSpan(requestPayload.Length - firstBufLen, firstBufLen));
+            catch (OperationCanceledException) { }
+            finally
+            {
+                firstBufCancel.Dispose();
+            }
+            byte[] requestPayload = sendArrayPool.Rent(destination.Host.Size + firstBufLen + 65);
+            try
+            {
+                var headerLen = FillTrojanRequest(requestPayload, destination);
+                firstBuf.CopyTo(requestPayload.AsSpan(headerLen));
 
-            await connectTask;
-            inputStream = socket.InputStream;
-            outputStream = socket.OutputStream;
-            await outputStream.WriteAsync(requestPayload.AsBuffer());
+                await connectTask;
+                inputStream = socket.InputStream;
+                outputStream = socket.OutputStream;
+                await outputStream.WriteAsync(requestPayload.AsBuffer(0, firstBuf.Length + headerLen));
+            }
+            finally
+            {
+                sendArrayPool.Return(requestPayload);
+            }
             if (firstBufLen > 0)
             {
                 localAdapter.ConfirmRecvFromLocal((ushort)firstBufLen);
@@ -106,9 +132,8 @@ namespace YtFlow.Tunnel.Adapter.Remote
 
         public async Task StartRecv (CancellationToken cancellationToken = default)
         {
-            //
             byte[] buf = new byte[RECV_BUFFER_LEN];
-            while (true)
+            while (!cancellationToken.IsCancellationRequested)
             {
                 var recvBuf = await inputStream.ReadAsync(buf.AsBuffer(), RECV_BUFFER_LEN, InputStreamOptions.Partial).AsTask(cancellationToken).ConfigureAwait(false);
                 if (recvBuf.Length == 0)
@@ -124,18 +149,33 @@ namespace YtFlow.Tunnel.Adapter.Remote
             while (await outboundChan.Reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
             {
                 var totalBytes = 0;
-                var packetsToSend = new List<IBuffer>();
-                while (outboundChan.Reader.TryRead(out var data))
+                var packetsToSend = new List<(byte[] Data, int Size)>();
+                while (outboundChan.Reader.TryRead(out var tuple))
                 {
-                    packetsToSend.Add(data.AsBuffer());
-                    totalBytes += data.Length;
+                    packetsToSend.Add(tuple);
+                    totalBytes += tuple.Size;
                 }
                 var pendingTasks = new Task[packetsToSend.Count];
-                for (var index = 0; index < packetsToSend.Count; ++index)
+                try
                 {
-                    pendingTasks[index] = outputStream.WriteAsync(packetsToSend[index]).AsTask(cancellationToken);
+                    for (var index = 0; index < packetsToSend.Count; ++index)
+                    {
+                        var (data, size) = packetsToSend[index];
+                        pendingTasks[index] = outputStream.WriteAsync(data.AsBuffer(0, size)).AsTask(cancellationToken);
+                    }
+                    await Task.WhenAll(pendingTasks).ConfigureAwait(false);
                 }
-                await Task.WhenAll(pendingTasks).ConfigureAwait(false);
+                finally
+                {
+                    if (localAdapter.Destination.TransportProtocol == TransportProtocol.Udp)
+                    {
+                        // The arrays are from our array pool.
+                        foreach (var (data, _) in packetsToSend)
+                        {
+                            sendArrayPool.Return(data);
+                        }
+                    }
+                }
                 localAdapter.ConfirmRecvFromLocal((ushort)totalBytes);
             }
             await outputStream.FlushAsync().AsTask(cancellationToken).ConfigureAwait(false);
@@ -161,22 +201,91 @@ namespace YtFlow.Tunnel.Adapter.Remote
         {
             if (outboundChan != null)
             {
-                await outboundChan.Writer.WriteAsync(buffer).ConfigureAwait(false);
+                await outboundChan.Writer.WriteAsync((buffer, buffer.Length)).ConfigureAwait(false);
             }
         }
 
-        public Task StartRecvPacket (CancellationToken cancellationToken = default)
+        public async Task StartRecvPacket (CancellationToken cancellationToken = default)
         {
-            throw new NotImplementedException();
+            byte[] buf = new byte[RECV_BUFFER_LEN];
+            var stream = inputStream.AsStreamForRead();
+            int offset = 0, unconsumedLen = 0;
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                int parseResult = Destination.Destination.TryParseSocks5StyleAddress(buf.AsSpan(offset, unconsumedLen), out _, TransportProtocol.Udp);
+                unconsumedLen -= parseResult;
+                while (parseResult == 0 || unconsumedLen < 4) // Need more data as address header + len + crlf
+                {
+                    var readLen = await stream.ReadAsync(buf, offset, RECV_BUFFER_LEN - offset).ConfigureAwait(false);
+                    offset += readLen;
+                    unconsumedLen += readLen;
+                    if (readLen == 0)
+                    {
+                        goto END;
+                    }
+                    if (parseResult == 0)
+                    {
+                        parseResult = Destination.Destination.TryParseSocks5StyleAddress(buf.AsSpan(0, unconsumedLen), out _, TransportProtocol.Udp);
+                        unconsumedLen -= parseResult;
+                    }
+                }
+
+                // buf now contains a valid address header, check payload length and CRLF
+                ushort len = (ushort)(buf[parseResult] << 8 | buf[parseResult + 1]);
+                if (buf[parseResult + 2] != 0x0D || buf[parseResult + 3] != 0x0A)
+                {
+                    if (DebugLogger.LogNeeded())
+                    {
+                        DebugLogger.Log("Received a malformed Trojan UDP response");
+                    }
+                    break;
+                }
+                unconsumedLen -= 4;
+                while (unconsumedLen < len)
+                {
+                    var readLen = await stream.ReadAsync(buf, offset, RECV_BUFFER_LEN - offset).ConfigureAwait(false);
+                    offset += readLen;
+                    unconsumedLen += readLen;
+                    if (readLen == 0)
+                    {
+                        goto END;
+                    }
+                }
+                await localAdapter.WriteToLocal(buf.AsSpan(offset - len, len), cancellationToken).ConfigureAwait(false);
+                unconsumedLen -= len;
+                if (unconsumedLen > 0)
+                {
+                    Array.Copy(buf, parseResult + len, buf, 0, unconsumedLen);
+                }
+                offset = unconsumedLen;
+            }
+        END:
+            ;
         }
 
         public void SendPacketToRemote (byte[] data, Destination.Destination destination)
         {
-            throw new NotImplementedException();
+            if (outboundChan == null)
+            {
+                return;
+            }
+            var sendBuf = sendArrayPool.Rent(data.Length + destination.Host.Size + 8);
+            // Return the array when it was sent or checking shutdown
+
+            var headerLen = FillTrojanRequest(sendBuf, destination, true, (ushort)data.Length);
+            data.CopyTo(sendBuf.AsSpan(headerLen));
+            _ = outboundChan.Writer.WriteAsync((sendBuf, headerLen + data.Length));
         }
 
         public void CheckShutdown ()
         {
+            if (outboundChan != null && localAdapter?.Destination.TransportProtocol == TransportProtocol.Udp)
+            {
+                while (outboundChan.Reader.TryRead(out var tuple))
+                {
+                    sendArrayPool.Return(tuple.Data);
+                }
+            }
             outboundChan = null;
             try
             {

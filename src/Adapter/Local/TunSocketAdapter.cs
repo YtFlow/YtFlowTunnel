@@ -185,7 +185,6 @@ namespace YtFlow.Tunnel.Adapter.Local
                        {
                            var ex = t.Exception.Flatten().GetBaseException();
                            DebugLogger.Log($"Recv error: {Destination}: {ex}");
-                           throw ex;
                        }
                        else if (t.Status == TaskStatus.RanToCompletion)
                        {
@@ -197,7 +196,8 @@ namespace YtFlow.Tunnel.Adapter.Local
                            }
                            await Close().ConfigureAwait(false);
                        }
-                   }).Unwrap(),
+                       return t;
+                   }).Unwrap().Unwrap(),
                     remoteAdapter.StartSend(sendCancel.Token).ContinueWith(t =>
                    {
                        Interlocked.Decrement(ref SendingCount);

@@ -194,7 +194,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
                     continue;
                 }
 
-                var headerLen = ParseAddressHeader(outDataBuffer.AsSpan(0, decDataLen), out _, TransportProtocol.Udp);
+                var headerLen = Destination.Destination.TryParseSocks5StyleAddress(outDataBuffer.AsSpan(0, decDataLen), out _, TransportProtocol.Udp);
                 if (headerLen <= 0)
                 {
                     continue;

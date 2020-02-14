@@ -31,66 +31,6 @@ namespace YtFlow.Tunnel.Adapter.Remote
         protected ICryptor cryptor = null;
         public bool RemoteDisconnected { get; set; } = false;
 
-        public static int FillAddressHeader (Span<byte> requestPayload, Destination.Destination destination)
-        {
-            int offset = destination.Host.Size + 3;
-            switch (destination.Host)
-            {
-                case DomainNameHost domainHost:
-                    offset++;
-                    requestPayload[0] = 0x03;
-                    requestPayload[1] = (byte)domainHost.Size;
-                    domainHost.CopyTo(requestPayload.Slice(2));
-                    break;
-                case Ipv4Host ipv4:
-                    requestPayload[0] = 0x01;
-                    ipv4.CopyTo(requestPayload.Slice(1, 4));
-                    break;
-                case Ipv6Host ipv6:
-                    requestPayload[0] = 0x04;
-                    ipv6.CopyTo(requestPayload.Slice(2, 16));
-                    break;
-            }
-            requestPayload[offset - 2] = (byte)(destination.Port >> 8);
-            requestPayload[offset - 1] = (byte)(destination.Port & 0xFF);
-            return offset;
-        }
-
-        public static int ParseAddressHeader (Span<byte> data, out Destination.Destination destination, TransportProtocol transportProtocol)
-        {
-            if (data.Length < 7)
-            {
-                destination = default;
-                return -1;
-            }
-            ushort port;
-            switch (data[0])
-            {
-                case 1:
-                    var ipBe = BitConverter.ToUInt32(data.Slice(1, 4).ToArray(), 0);
-                    port = (ushort)(data[5] << 8 | data[6] & 0xFF);
-                    var ipv4Host = new Ipv4Host(ipBe);
-                    destination = new Destination.Destination(ipv4Host, port, transportProtocol);
-                    return 7;
-                case 3:
-                    var domainLen = data[1];
-                    if (data.Length < domainLen + 4)
-                    {
-                        destination = default;
-                        return -1;
-                    }
-                    var domainHost = new DomainNameHost(data.Slice(2, domainLen).ToArray());
-                    port = (ushort)(data[2 + domainLen] << 8 | data[3 + domainLen] & 0xFF);
-                    destination = new Destination.Destination(domainHost, port, transportProtocol);
-                    return domainLen + 4;
-                case 4:
-                    throw new NotImplementedException();
-                default:
-                    destination = default;
-                    return -1;
-            }
-        }
-
         /// <summary>
         /// Encrypt input data using the cryptor. Will be used to send Shadowsocks requests.
         /// </summary>
@@ -174,14 +114,23 @@ namespace YtFlow.Tunnel.Adapter.Remote
             }
 
             byte[] firstBuf = Array.Empty<byte>();
-            if (await outboundChan.Reader.WaitToReadAsync().ConfigureAwait(false))
+            var firstBufCancel = new CancellationTokenSource(500);
+            try
             {
-                outboundChan.Reader.TryRead(out firstBuf);
+                if (await outboundChan.Reader.WaitToReadAsync(firstBufCancel.Token).ConfigureAwait(false))
+                {
+                    outboundChan.Reader.TryRead(out firstBuf);
+                }
+            }
+            catch (OperationCanceledException) { }
+            finally
+            {
+                firstBufCancel.Dispose();
             }
             int firstBufLen = firstBuf.Length;
             int requestPayloadLen = firstBufLen + destination.Host.Size + 4;
             var requestPayload = sendArrayPool.Rent(requestPayloadLen);
-            var headerLen = FillAddressHeader(requestPayload, destination);
+            var headerLen = destination.FillSocks5StyleAddress(requestPayload);
             firstBuf.CopyTo(requestPayload.AsSpan(headerLen));
             var encryptedFirstSeg = sendArrayPool.Rent(requestPayloadLen + 66); // Reserve space for IV or salt + 2 * tag + size
             var ivLen = Encrypt(Array.Empty<byte>(), encryptedFirstSeg); // Fill IV/salt first
@@ -240,6 +189,10 @@ namespace YtFlow.Tunnel.Adapter.Remote
 
         public async Task StartSend (CancellationToken cancellationToken = default)
         {
+            if (localAdapter.Destination.TransportProtocol == TransportProtocol.Udp)
+            {
+                return;
+            }
             while (await outboundChan.Reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
             {
                 outboundChan.Reader.TryRead(out var data);
@@ -281,7 +234,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
                     continue;
                 }
 
-                var headerLen = ParseAddressHeader(outDataBuffer.AsSpan(0, (int)decDataLen), out _, TransportProtocol.Udp);
+                var headerLen = Destination.Destination.TryParseSocks5StyleAddress(outDataBuffer.AsSpan(0, (int)decDataLen), out _, TransportProtocol.Udp);
                 if (headerLen <= 0)
                 {
                     continue;
@@ -309,7 +262,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
             try
             {
                 // TODO: avoid copy
-                var headerLen = FillAddressHeader(udpSendBuffer, destination);
+                var headerLen = destination.FillSocks5StyleAddress(udpSendBuffer);
                 data.CopyTo(udpSendBuffer.AsSpan(headerLen));
                 var cryptor = ShadowsocksFactory.GlobalCryptorFactory.CreateCryptor();
                 var ivLen = Encrypt(Array.Empty<byte>(), udpSendEncBuffer, cryptor); // Fill IV/Salt first
