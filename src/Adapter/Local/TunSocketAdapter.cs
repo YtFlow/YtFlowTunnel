@@ -44,17 +44,7 @@ namespace YtFlow.Tunnel.Adapter.Local
             socket.RecvFinished += Socket_RecvFinished;
 
             // Resolve destination host
-            var domain = DnsProxyServer.Lookup(socket.RemoteAddr);
-            IHost host;
-            if (domain == null)
-            {
-                // TODO: Check if the remote addr falls in our IP range
-                host = new Ipv4Host(socket.RemoteAddr);
-            }
-            else
-            {
-                host = new DomainNameHost(domain);
-            }
+            var host = DnsProxyServer.TryLookup(socket.RemoteAddr);
             Destination = new Destination.Destination(host, socket.RemotePort, TransportProtocol.Tcp);
 
             StartPolling();

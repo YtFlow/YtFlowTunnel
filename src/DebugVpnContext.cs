@@ -58,9 +58,9 @@ namespace YtFlow.Tunnel
         {
             // s?.Dispose();
             // s = null;
+            tun?.Deinit();
             u?.Dispose();
             u = null;
-            tun?.Deinit();
         }
 
         private void Tun_PacketPoped (object sender, byte[] e)

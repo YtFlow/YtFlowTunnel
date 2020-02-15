@@ -172,7 +172,6 @@ namespace YtFlow.Tunnel.Adapter.Local
                     // TODO: IPv6
                     throw UdpMethodNotSupported;
             }
-            Debug.WriteLine(src);
             secondsTicked = 0;
             data.CopyTo(sendBuffer);
             var len = data.Length;

@@ -46,14 +46,14 @@ namespace YtFlow.Tunnel.Adapter.Destination
                         destination = default;
                         return 0;
                     }
-                    host = new DomainNameHost(data.Slice(2, domainLen).ToArray());
+                    host = new DomainNameHost(data.Slice(len, domainLen).ToArray());
                     len += domainLen;
                     break;
                 default:
                     // TODO: IPv6
                     throw new NotImplementedException();
             }
-            ushort port = (ushort)(data[5] << 8 | data[6] & 0xFF);
+            ushort port = (ushort)(data[len] << 8 | data[len + 1] & 0xFF);
             len += 2;
             destination = new Destination(host, port, transportProtocol);
             return len;

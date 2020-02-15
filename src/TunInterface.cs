@@ -115,6 +115,8 @@ namespace YtFlow.Tunnel
                 return;
             }
             DebugLogger.Log("Tun deinit req");
+            wintun.PacketPoped -= W_PopPacket;
+            TcpSocket.EstablishedTcp -= W_EstablishTcp;
             foreach (var weakAdapter in tunAdapters.Where(w => w.TryGetTarget(out var a) /* TODO: && a.IsShutdown != 0 */))
             {
                 try
@@ -128,8 +130,6 @@ namespace YtFlow.Tunnel
             TunDatagramAdapter.socketMap.Clear();
             await Task.Delay(300).ConfigureAwait(false);
             wintun.Deinit();
-            wintun.PacketPoped -= W_PopPacket;
-            TcpSocket.EstablishedTcp -= W_EstablishTcp;
 
             tunAdapters.Clear();
             // To avoid problems after reconnecting

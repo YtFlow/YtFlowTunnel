@@ -83,7 +83,7 @@ namespace YtFlow.Tunnel.Adapter.Relay
             remoteAdapter.SendToRemote(buffer);
         }
 
-        public Task StartRecv (CancellationToken cancellationToken = default)
+        public virtual Task StartRecv (CancellationToken cancellationToken = default)
         {
             return remoteAdapter.StartRecv(cancellationToken);
         }
