@@ -98,7 +98,7 @@ namespace YtFlow.Tunnel.Adapter.Relay
             return remoteAdapter.StartRecvPacket(cancellationToken);
         }
 
-        public void SendPacketToRemote (byte[] data, Destination.Destination destination)
+        public void SendPacketToRemote (Memory<byte> data, Destination.Destination destination)
         {
             remoteAdapter.SendPacketToRemote(data, destination);
         }

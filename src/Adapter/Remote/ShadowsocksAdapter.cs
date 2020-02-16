@@ -175,15 +175,19 @@ namespace YtFlow.Tunnel.Adapter.Remote
             outboundChan.Writer.TryComplete(ex);
             if (ex != null)
             {
-                client.Client.Dispose();
+                try
+                {
+                    client.Client.Dispose();
+                }
+                catch (ObjectDisposedException) { }
             }
         }
 
-        public async void SendToRemote (byte[] buffer)
+        public void SendToRemote (byte[] buffer)
         {
             if (outboundChan != null)
             {
-                await outboundChan.Writer.WriteAsync(buffer).ConfigureAwait(false);
+                _ = outboundChan.Writer.WriteAsync(buffer);
             }
         }
 
@@ -243,7 +247,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
             }
         }
 
-        public async void SendPacketToRemote (byte[] data, Destination.Destination destination)
+        public async void SendPacketToRemote (Memory<byte> data, Destination.Destination destination)
         {
             try
             {
@@ -263,7 +267,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
             {
                 // TODO: avoid copy
                 var headerLen = destination.FillSocks5StyleAddress(udpSendBuffer);
-                data.CopyTo(udpSendBuffer.AsSpan(headerLen));
+                data.Span.CopyTo(udpSendBuffer.AsSpan(headerLen));
                 var cryptor = ShadowsocksFactory.GlobalCryptorFactory.CreateCryptor();
                 var ivLen = Encrypt(Array.Empty<byte>(), udpSendEncBuffer, cryptor); // Fill IV/Salt first
                 var len = EncryptAll(udpSendBuffer.AsSpan(0, headerLen + data.Length), udpSendEncBuffer.AsSpan((int)ivLen), cryptor);
@@ -285,13 +289,13 @@ namespace YtFlow.Tunnel.Adapter.Remote
         {
             // cryptor?.Dispose();
             cryptor = null;
-            outboundChan = null;
+            // outboundChan = null;
             try
             {
                 networkStream?.Dispose();
             }
             catch (ObjectDisposedException) { }
-            networkStream = null;
+            // networkStream = null;
             try
             {
                 client?.Dispose();
@@ -302,8 +306,8 @@ namespace YtFlow.Tunnel.Adapter.Remote
                 udpSendLock?.Dispose();
             }
             catch (ObjectDisposedException) { }
-            client = null;
-            udpClient = null;
+            // client = null;
+            // udpClient = null;
             localAdapter = null;
         }
     }

@@ -4,6 +4,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
+using YtFlow.Tunnel.Adapter.Destination;
 using YtFlow.Tunnel.Adapter.Local;
 
 namespace YtFlow.Tunnel.Adapter.Remote
@@ -12,6 +13,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
     {
         private static readonly byte[] HEADER1 = Encoding.UTF8.GetBytes("CONNECT ");
         private static readonly byte[] HEADER2 = Encoding.UTF8.GetBytes(" HTTP/1.1\r\n\r\n");
+        private static readonly NotSupportedException UdpNotSupportedException = new NotSupportedException("UDP destination is not supported");
         private readonly string server;
         private readonly int port;
         private const int RECV_BUFFER_LEN = 1024;
@@ -36,6 +38,10 @@ namespace YtFlow.Tunnel.Adapter.Remote
 
         public async Task Init (ILocalAdapter localAdapter)
         {
+            if (localAdapter.Destination.TransportProtocol == TransportProtocol.Udp)
+            {
+                throw UdpNotSupportedException;
+            }
             this.localAdapter = localAdapter;
             var connectTask = client.ConnectAsync(server, port).ConfigureAwait(false);
             var destination = localAdapter.Destination;
@@ -110,15 +116,19 @@ namespace YtFlow.Tunnel.Adapter.Remote
             outboundChan.Writer.TryComplete(ex);
             if (ex != null)
             {
-                client.Client.Dispose();
+                try
+                {
+                    client.Client.Dispose();
+                }
+                catch (ObjectDisposedException) { }
             }
         }
 
-        public async void SendToRemote (byte[] buffer)
+        public void SendToRemote (byte[] buffer)
         {
             if (outboundChan != null)
             {
-                await outboundChan.Writer.WriteAsync(buffer).ConfigureAwait(false);
+                _ = outboundChan.Writer.WriteAsync(buffer);
             }
         }
 
@@ -161,7 +171,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
             throw new NotImplementedException();
         }
 
-        public void SendPacketToRemote (byte[] data, Destination.Destination destination)
+        public void SendPacketToRemote (Memory<byte> data, Destination.Destination destination)
         {
             throw new NotImplementedException();
         }

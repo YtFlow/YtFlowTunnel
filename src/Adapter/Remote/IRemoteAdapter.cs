@@ -14,7 +14,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
         Task StartSend (CancellationToken cancellationToken = default);
         void FinishSendToRemote (Exception ex = null);
         void SendToRemote (byte[] buffer);
-        void SendPacketToRemote (byte[] data, Destination.Destination destination);
+        void SendPacketToRemote (Memory<byte> data, Destination.Destination destination);
         void CheckShutdown ();
     }
 }

@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Buffers;
 using System.Collections.Generic;
-using System.Diagnostics;
+using System.Runtime.InteropServices.WindowsRuntime;
 using System.Threading;
 using System.Threading.Tasks;
 using YtFlow.Tunnel.Adapter.Destination;
@@ -218,12 +218,25 @@ namespace YtFlow.Tunnel.Adapter.Local
             var dstIp = BitConverter.ToUInt32(packet, 16);
             ushort srcPort = (ushort)((packet[20] << 8) | (packet[21] & 0xFF));
             ushort dstPort = (ushort)((packet[22] << 8) | (packet[23] & 0xFF));
-            var payload = packet.AsSpan(28).ToArray();
+            var payload = packet.AsMemory(28);
             if (dstIp == DNS_ADDRESS && dstPort == DNS_PORT)
             {
                 // DNS request
-                var res = await DnsProxyServer.QueryAsync(payload).ConfigureAwait(false);
-                await tun.executeLwipTask(() => tun.wintun.PushDnsPayload(srcIp, srcPort, res)).ConfigureAwait(false);
+                var resBuf = udpPayloadArrayPool.Rent(1000); // The length of a domain name cannot exceed 255 bytes
+                try
+                {
+                    var len = await DnsProxyServer.QueryAsync(payload, resBuf.AsMemory()).ConfigureAwait(false);
+                    if (len <= 0)
+                    {
+                        return;
+                    }
+                    var buf = resBuf.AsBuffer(0, len);
+                    await tun.executeLwipTask(() => tun.wintun.PushDnsPayload(srcIp, srcPort, buf)).ConfigureAwait(false);
+                }
+                finally
+                {
+                    udpPayloadArrayPool.Return(resBuf);
+                }
             }
             else
             {

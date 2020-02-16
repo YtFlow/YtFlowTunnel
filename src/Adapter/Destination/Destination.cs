@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 
 namespace YtFlow.Tunnel.Adapter.Destination
 {
@@ -35,7 +36,7 @@ namespace YtFlow.Tunnel.Adapter.Destination
             switch (data[len++])
             {
                 case 1:
-                    var ipBe = BitConverter.ToUInt32(data.Slice(len, 4).ToArray(), 0);
+                    var ipBe = MemoryMarshal.Read<uint>(data.Slice(len, 4));
                     host = new Ipv4Host(ipBe);
                     len += 4;
                     break;
