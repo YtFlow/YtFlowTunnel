@@ -41,7 +41,6 @@ namespace YtFlow.Tunnel.Adapter.Local
                 {
                     DebugLogger.Log($"Error initiating a connection to {Destination}: {t.Exception}");
                     remoteAdapter.RemoteDisconnected = true;
-                    Reset();
                     CheckShutdown();
                 }
                 else
