@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using Windows.Networking;
+using Windows.Networking.Connectivity;
 using Windows.Networking.Sockets;
 using Windows.Security.Cryptography.Certificates;
 using Windows.Storage.Streams;
@@ -89,7 +90,8 @@ namespace YtFlow.Tunnel.Adapter.Remote
                 socket.Control.IgnorableServerCertificateErrors.Add(ChainValidationResult.Expired);
                 socket.Control.IgnorableServerCertificateErrors.Add(ChainValidationResult.InvalidName);
             }
-            var connectTask = socket.ConnectAsync(server, port, SocketProtectionLevel.Tls12).AsTask().ConfigureAwait(false);
+            var dev = NetworkInformation.GetInternetConnectionProfile().NetworkAdapter;
+            var connectTask = socket.ConnectAsync(server, port, SocketProtectionLevel.Tls12, dev).AsTask().ConfigureAwait(false);
             // TODO: custom certificate, server name
 
             var destination = localAdapter.Destination;
