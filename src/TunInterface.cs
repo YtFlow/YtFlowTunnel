@@ -63,6 +63,16 @@ namespace YtFlow.Tunnel
                 catch (Exception e)
                 {
                     DebugLogger.Log("Error from task queue: " + e.ToString());
+                    var localSettings = Windows.Storage.ApplicationData.Current.LocalSettings.Values;
+                    if (localSettings.TryGetValue("lastError", out var lastErr) && lastErr is string lastErrStr)
+                    {
+                        lastErrStr += "\r\n" + e.ToString();
+                    }
+                    else
+                    {
+                        lastErrStr = e.ToString();
+                    }
+                    localSettings["lastError"] = lastErrStr;
                 }
             }
         }
