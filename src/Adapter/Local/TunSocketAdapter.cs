@@ -279,7 +279,7 @@ namespace YtFlow.Tunnel.Adapter.Local
                 return Task.FromResult(0);
             }
             pollCancelSource?.Cancel();
-            return _tun.executeLwipTask(() => _socket.Close());
+            return _tun.executeLwipTask(() => _socket.Shutdown());
         }
 
         public void Reset ()
