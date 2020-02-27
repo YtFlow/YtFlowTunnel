@@ -164,16 +164,6 @@
     <EmbeddedResource Include="Properties\YtFlowTunnel.rd.xml" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\wintun2socks\src\wintun2socks.vcxproj">
-      <Project>{354c56b0-57a7-42c8-ba52-baa188c861e5}</Project>
-      <Name>wintun2socks</Name>
-    </ProjectReference>
-    <ProjectReference Include="..\..\YtCrypto\src\YtCrypto.vcxproj">
-      <Project>{0e55791a-e5d5-4b70-9ea6-a1a6c44c3deb}</Project>
-      <Name>YtCrypto</Name>
-    </ProjectReference>
-  </ItemGroup>
-  <ItemGroup>
     <PackageReference Include="Microsoft.NETCore.UniversalWindowsPlatform">
       <Version>6.2.9</Version>
     </PackageReference>
@@ -186,6 +176,16 @@
     <PackageReference Include="System.ValueTuple">
       <Version>4.5.0</Version>
     </PackageReference>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Wintun2socks\src\wintun2socks.vcxproj">
+      <Project>{354c56b0-57a7-42c8-ba52-baa188c861e5}</Project>
+      <Name>wintun2socks</Name>
+    </ProjectReference>
+    <ProjectReference Include="..\YtCrypto\src\YtCrypto.vcxproj">
+      <Project>{0e55791a-e5d5-4b70-9ea6-a1a6c44c3deb}</Project>
+      <Name>YtCrypto</Name>
+    </ProjectReference>
   </ItemGroup>
   <PropertyGroup Condition=" '$(VisualStudioVersion)' == '' or '$(VisualStudioVersion)' &lt; '14.0' ">
     <VisualStudioVersion>14.0</VisualStudioVersion>

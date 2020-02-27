@@ -1,0 +1,6 @@
+[submodule "Wintun2socks"]
+	path = Wintun2socks
+	url = https://github.com/YtFlow/Wintun2socks
+[submodule "YtCrypto"]
+	path = YtCrypto
+	url = https://github.com/YtFlow/YtCrypto
