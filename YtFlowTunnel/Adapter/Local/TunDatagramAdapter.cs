@@ -249,8 +249,12 @@ namespace YtFlow.Tunnel.Adapter.Local
                 }
                 if (socket.remoteAdapter?.RemoteDisconnected == false)
                 {
-                    await socket.initTask.ConfigureAwait(false);
-                    socket.remoteAdapter?.SendPacketToRemote(payload, destination);
+                    try
+                    {
+                        await socket.initTask.ConfigureAwait(false);
+                        socket.remoteAdapter?.SendPacketToRemote(payload, destination);
+                    }
+                    catch (NotSupportedException) { }
                 }
             }
         }

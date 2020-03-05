@@ -18,13 +18,13 @@ namespace YtFlow.Tunnel.Adapter.Remote
         private readonly int port;
         private const int RECV_BUFFER_LEN = 1024;
         private const int HEAD_BUFFER_LEN = 100;
-        private TcpClient client = new TcpClient(AddressFamily.InterNetwork)
+        private readonly TcpClient client = new TcpClient(AddressFamily.InterNetwork)
         {
             NoDelay = true
         };
         private NetworkStream networkStream;
         private ILocalAdapter localAdapter;
-        private Channel<byte[]> outboundChan = Channel.CreateUnbounded<byte[]>(new UnboundedChannelOptions()
+        private readonly Channel<byte[]> outboundChan = Channel.CreateUnbounded<byte[]>(new UnboundedChannelOptions()
         {
             SingleReader = true
         });
@@ -168,12 +168,11 @@ namespace YtFlow.Tunnel.Adapter.Remote
 
         public Task StartRecvPacket (CancellationToken cancellationToken = default)
         {
-            throw new NotImplementedException();
+            return Task.CompletedTask;
         }
 
         public void SendPacketToRemote (Memory<byte> data, Destination.Destination destination)
         {
-            throw new NotImplementedException();
         }
     }
 }
