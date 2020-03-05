@@ -196,7 +196,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
                 try
                 {
                     await socket.CancelIOAsync().AsTask().ConfigureAwait(false);
-                    socket.Dispose();
+                    socket?.Dispose();
                 }
                 catch (ObjectDisposedException) { }
             }

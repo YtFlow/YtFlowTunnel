@@ -177,7 +177,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
             {
                 try
                 {
-                    client.Client.Dispose();
+                    client?.Client.Dispose();
                 }
                 catch (ObjectDisposedException) { }
             }
@@ -277,7 +277,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
             {
                 try
                 {
-                    udpSendLock?.Release();
+                    udpSendLock.Release();
                 }
                 catch (ObjectDisposedException) { }
                 sendArrayPool.Return(udpSendBuffer);
@@ -288,7 +288,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
         public void CheckShutdown ()
         {
             // cryptor?.Dispose();
-            cryptor = null;
+            // cryptor = null;
             // outboundChan = null;
             try
             {
@@ -303,7 +303,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
             catch (ObjectDisposedException) { }
             try
             {
-                udpSendLock?.Dispose();
+                udpSendLock.Dispose();
             }
             catch (ObjectDisposedException) { }
             // client = null;

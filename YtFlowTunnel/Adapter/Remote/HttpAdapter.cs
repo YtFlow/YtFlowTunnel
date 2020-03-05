@@ -118,7 +118,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
             {
                 try
                 {
-                    client.Client.Dispose();
+                    client?.Client.Dispose();
                 }
                 catch (ObjectDisposedException) { }
             }
@@ -162,8 +162,17 @@ namespace YtFlow.Tunnel.Adapter.Remote
 
         public void CheckShutdown ()
         {
-            networkStream?.Dispose();
-            client?.Dispose();
+            try
+            {
+                networkStream?.Dispose();
+            }
+            catch (ObjectDisposedException) { }
+            try
+            {
+                client?.Dispose();
+            }
+            catch (ObjectDisposedException) { }
+            localAdapter = null;
         }
 
         public Task StartRecvPacket (CancellationToken cancellationToken = default)

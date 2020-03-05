@@ -18,6 +18,8 @@ namespace YtFlow.Tunnel.Adapter.Local
         protected PipeWriter pipeWriter;
         private readonly IRemoteAdapter remoteAdapter;
         private CancellationTokenSource pollCancelSource = new CancellationTokenSource();
+        private CancellationTokenSource recvCancel = new CancellationTokenSource();
+        private CancellationTokenSource sendCancel = new CancellationTokenSource();
         private SemaphoreSlim localStackBufLock = new SemaphoreSlim(1, 1);
         private SemaphoreSlim localWriteFinishLock = new SemaphoreSlim(0, 1);
         private int localStackByteCount = 11680;
@@ -160,8 +162,6 @@ namespace YtFlow.Tunnel.Adapter.Local
 
         public async Task StartForward ()
         {
-            var recvCancel = new CancellationTokenSource();
-            var sendCancel = new CancellationTokenSource();
             try
             {
                 Interlocked.Increment(ref RecvingCount);
@@ -204,7 +204,6 @@ namespace YtFlow.Tunnel.Adapter.Local
                    }).Unwrap()
                 ).ConfigureAwait(false);
             }
-            catch (OperationCanceledException) { }
             catch (Exception)
             {
                 // Something wrong happened during recv/send and was handled separatedly.
@@ -231,6 +230,16 @@ namespace YtFlow.Tunnel.Adapter.Local
             DebugLogger.Log("Socket error " + err.ToString());
             if (remoteAdapter?.RemoteDisconnected == false)
             {
+                try
+                {
+                    sendCancel.Cancel();
+                }
+                catch (ObjectDisposedException) { }
+                try
+                {
+                    recvCancel.Cancel();
+                }
+                catch (ObjectDisposedException) { }
                 remoteAdapter?.FinishSendToRemote(new LwipException(err));
             }
             if (localWriteFinishLock?.CurrentCount == 0)
