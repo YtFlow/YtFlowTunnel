@@ -15,7 +15,7 @@ namespace YtFlow.Tunnel.Adapter.Factory
         {
             this.config = config;
             var lowerMethod = config.Method.ToLower();
-            if (lowerMethod.EndsWith("gcm") || lowerMethod == "chacha20-ietf-poly1305")
+            if (lowerMethod.EndsWith("gcm") || lowerMethod.EndsWith("poly1305"))
             {
                 isAead = true;
             }
