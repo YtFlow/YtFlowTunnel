@@ -24,11 +24,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
             fixed (byte* dataPtr = &data.GetPinnableReference(), tagPtr = &tag.GetPinnableReference(), outDataPtr = &outData.GetPinnableReference())
             {
                 // Reserve for iv
-#if X64
-                var outLen = cryptor.EncryptAuth((long)dataPtr, data.Length, (long)tagPtr, (ulong)tag.Length, (long)outDataPtr, outData.Length);
-#else
-                var outLen = cryptor.EncryptAuth((int)dataPtr, data.Length, (int)tagPtr, (uint)tag.Length, (int)outDataPtr, outData.Length);
-#endif
+                var outLen = cryptor.EncryptAuth((ulong)dataPtr, (uint)data.Length, (ulong)tagPtr, (uint)tag.Length, (ulong)outDataPtr, (uint)outData.Length);
                 if (outLen < 0)
                 {
                     throw new AeadOperationException(outLen);
@@ -59,7 +55,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
             lenData[0] = (byte)(data.Length >> 8);
             lenData[1] = (byte)(data.Length & 0xFF);
             var encryptedLenSize = RealEncrypt(lenData, outData.Slice(2, TAG_SIZE), outData.Slice(0, 2), cryptor) + TAG_SIZE;
-            var dataLenSize = RealEncrypt(data, outData.Slice(encryptedLenSize + data.Length, TAG_SIZE), outData.Slice(encryptedLenSize, data.Length), cryptor) + TAG_SIZE;
+            var dataLenSize = RealEncrypt(data, outData.Slice((int)encryptedLenSize + data.Length, TAG_SIZE), outData.Slice((int)encryptedLenSize, data.Length), cryptor) + TAG_SIZE;
             return (uint)(encryptedLenSize + dataLenSize);
         }
 
@@ -73,11 +69,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
         {
             fixed (byte* dataPtr = &data.GetPinnableReference(), tagPtr = &tag.GetPinnableReference(), outDataPtr = &outData.GetPinnableReference())
             {
-#if X64
-                var outLen = cryptor.DecryptAuth((long)dataPtr, data.Length, (long)tagPtr, (ulong)tag.Length, (long)outDataPtr, outData.Length);
-#else
-                var outLen = cryptor.DecryptAuth((int)dataPtr, data.Length, (int)tagPtr, (uint)tag.Length, (int)outDataPtr, outData.Length);
-#endif
+                var outLen = cryptor.DecryptAuth((ulong)dataPtr, (uint)data.Length, (ulong)tagPtr, (uint)tag.Length, (ulong)outDataPtr, (uint)outData.Length);
                 if (outLen < 0)
                 {
                     throw new AeadOperationException(outLen);
@@ -194,12 +186,12 @@ namespace YtFlow.Tunnel.Adapter.Remote
                     continue;
                 }
 
-                var headerLen = Destination.Destination.TryParseSocks5StyleAddress(outDataBuffer.AsSpan(0, decDataLen), out _, TransportProtocol.Udp);
+                var headerLen = Destination.Destination.TryParseSocks5StyleAddress(outDataBuffer.AsSpan(0, (int)decDataLen), out _, TransportProtocol.Udp);
                 if (headerLen <= 0)
                 {
                     continue;
                 }
-                await localAdapter.WriteToLocal(outDataBuffer.AsSpan(headerLen, decDataLen - headerLen), cancellationToken).ConfigureAwait(false);
+                await localAdapter.WriteToLocal(outDataBuffer.AsSpan(headerLen, (int)decDataLen - headerLen), cancellationToken).ConfigureAwait(false);
             }
         }
 

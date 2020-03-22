@@ -47,11 +47,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
             fixed (byte* dataPtr = &data.GetPinnableReference(), outDataPtr = &outData.GetPinnableReference())
             {
                 // Reserve for iv
-#if X64
-                var outLen = cryptor.Encrypt((long)dataPtr, (ulong)data.Length, (long)outDataPtr, (ulong)outData.Length);
-#else
-                var outLen = cryptor.Encrypt((int)dataPtr, (uint)data.Length, (int)outDataPtr, (uint)outData.Length);
-#endif
+                var outLen = cryptor.Encrypt((ulong)dataPtr, (uint)data.Length, (ulong)outDataPtr, (uint)outData.Length);
 #pragma warning disable IDE0004
                 return (uint)outLen;
 #pragma warning restore IDE0004
@@ -71,11 +67,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
             }
             fixed (byte* dataPtr = &data.GetPinnableReference(), outDataPtr = &outData.GetPinnableReference())
             {
-#if X64
-                var outLen = cryptor.Decrypt((long)dataPtr, (ulong)data.Length, (long)outDataPtr, (ulong)outData.Length);
-#else
-                var outLen = cryptor.Decrypt((int)dataPtr, (uint)data.Length, (int)outDataPtr, (uint)outData.Length);
-#endif
+                var outLen = cryptor.Decrypt((ulong)dataPtr, (uint)data.Length, (ulong)outDataPtr, (uint)outData.Length);
 #pragma warning disable IDE0004
                 return (uint)outLen;
 #pragma warning restore IDE0004

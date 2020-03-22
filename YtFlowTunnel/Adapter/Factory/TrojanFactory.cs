@@ -18,11 +18,7 @@ namespace YtFlow.Tunnel.Adapter.Factory
             serviceName = config.ServerPort.ToString();
             allowInsecure = config.AllowInsecure;
             var keyBuf = new byte[32];
-            var hashResult = YtCrypto.Common.Sha224(Encoding.UTF8.GetBytes(config.Password), keyBuf);
-            if (hashResult != 0)
-            {
-                throw new Exception("Cannot hash Trojan password, result = " + hashResult.ToString());
-            }
+            YtCrypto.Util.Sha224(Encoding.UTF8.GetBytes(config.Password), keyBuf);
             hashedKey = Encoding.ASCII.GetBytes(BitConverter.ToString(keyBuf).Replace("-", string.Empty).ToLower()).AsMemory(0, 56);
         }
         public IRemoteAdapter CreateAdapter ()

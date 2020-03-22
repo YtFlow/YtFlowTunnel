@@ -10,7 +10,7 @@ namespace YtFlow.Tunnel.Adapter.Factory
         private ShadowsocksConfig config { get; }
         internal static CryptorFactory GlobalCryptorFactory { get; set; }
         private CryptorFactory CryptorFactory { get; set; }
-        private bool isAead = false;
+        private readonly bool isAead = false;
         public ShadowsocksFactory (ShadowsocksConfig config)
         {
             this.config = config;
@@ -19,7 +19,7 @@ namespace YtFlow.Tunnel.Adapter.Factory
             {
                 isAead = true;
             }
-            GlobalCryptorFactory = CryptorFactory = new CryptorFactory(config.Method, Encoding.UTF8.GetBytes(config.Password));
+            GlobalCryptorFactory = CryptorFactory = CryptorFactory.CreateFactory(config.Method, Encoding.UTF8.GetBytes(config.Password));
         }
 
         public IRemoteAdapter CreateAdapter ()
