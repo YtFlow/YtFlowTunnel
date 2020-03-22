@@ -178,11 +178,7 @@ namespace YtFlow.Tunnel.Adapter.Local
             {
                 fixed (byte* ptr = sendBuffer)
                 {
-#if X64
-                    return tun.wintun.PushUdpPayload(src.Data, Destination.Port, localAddr, localPort, (long)ptr, (ushort)len);
-#else
-                    return tun.wintun.PushUdpPayload(src.Data, Destination.Port, localAddr, localPort, (int)ptr, (ushort)len);
-#endif
+                    return tun.wintun.PushUdpPayload(src.Data, Destination.Port, localAddr, localPort, (ulong)ptr, (ushort)len);
                 }
             });
         }

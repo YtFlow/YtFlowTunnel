@@ -73,11 +73,7 @@ namespace YtFlow.Tunnel.Adapter.Local
 
         private unsafe Task<byte> SendToSocket (MemoryHandle dataHandle, ushort len, bool more)
         {
-#if X64
-            return _tun.executeLwipTask(() => _socket.Send((long)dataHandle.Pointer, len, more));
-#else
-            return _tun.executeLwipTask(() => _socket.Send((int)dataHandle.Pointer, len, more));
-#endif
+            return _tun.executeLwipTask(() => _socket.Send((ulong)dataHandle.Pointer, len, more));
         }
 
         private async Task<bool> PollOne ()
