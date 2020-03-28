@@ -124,6 +124,10 @@ namespace YtFlow.Tunnel.Adapter.Relay
 
             var request = await requestTcs.Task.ConfigureAwait(false);
             Destination = ParseDestinationFromRequest(request);
+            if (Destination.TransportProtocol == TransportProtocol.Udp)
+            {
+                throw UnknownTypeException;
+            }
             await WriteToLocal(DummyResponsePayload);
 
             await base.Init(localAdapter).ConfigureAwait(false);
@@ -135,8 +139,6 @@ namespace YtFlow.Tunnel.Adapter.Relay
             {
                 case TransportProtocol.Tcp:
                     return base.StartRecv(cancellationToken);
-                case TransportProtocol.Udp:
-                    return base.StartRecvPacket(cancellationToken);
             }
             throw new NotImplementedException();
         }
@@ -160,13 +162,6 @@ namespace YtFlow.Tunnel.Adapter.Relay
                     {
                         case TransportProtocol.Tcp:
                             base.SendToRemote(buffer);
-                            break;
-                        case TransportProtocol.Udp:
-                            var headerLen = ParseDestinationFromUdpPayload(buffer, out _);
-                            if (headerLen > 0)
-                            {
-                                base.SendPacketToRemote(buffer.AsSpan(headerLen).ToArray(), Destination);
-                            }
                             break;
                     }
                     break;
