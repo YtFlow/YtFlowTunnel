@@ -8,7 +8,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
     internal interface IRemoteAdapter
     {
         bool RemoteDisconnected { get; set; }
-        Task Init (ILocalAdapter localAdapter);
+        ValueTask Init (ILocalAdapter localAdapter);
         Task StartRecv (CancellationToken cancellationToken = default);
         Task StartRecvPacket (CancellationToken cancellationToken = default);
         Task StartSend (CancellationToken cancellationToken = default);

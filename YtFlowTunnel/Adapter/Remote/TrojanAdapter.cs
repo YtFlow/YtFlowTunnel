@@ -79,7 +79,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
             return len;
         }
 
-        public async Task Init (ILocalAdapter localAdapter)
+        public async ValueTask Init (ILocalAdapter localAdapter)
         {
             this.localAdapter = localAdapter;
             if (allowInsecure)

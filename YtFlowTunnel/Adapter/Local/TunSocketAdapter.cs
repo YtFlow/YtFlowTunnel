@@ -51,27 +51,30 @@ namespace YtFlow.Tunnel.Adapter.Local
 
             StartPolling();
             this.remoteAdapter = remoteAdapter;
-            remoteAdapter.Init(this).ContinueWith(async t =>
+            Init();
+        }
+        private async void Init ()
+        {
+            try
             {
-                if (t.IsCanceled || t.IsFaulted)
-                {
-                    DebugLogger.Log($"Error initiating a connection to {Destination}: {t.Exception}");
-                    remoteAdapter.RemoteDisconnected = true;
-                    Reset();
-                    CheckShutdown();
-                }
-                else
-                {
-                    if (DebugLogger.LogNeeded())
-                    {
-                        DebugLogger.Log("Connected: " + Destination.ToString());
-                    }
-                    await StartForward().ConfigureAwait(false);
-                }
-            });
+                await remoteAdapter.Init(this);
+            }
+            catch (Exception ex)
+            {
+                DebugLogger.Log($"Error initiating a connection to {Destination}: {ex}");
+                remoteAdapter.RemoteDisconnected = true;
+                Reset();
+                CheckShutdown();
+                return;
+            }
+            if (DebugLogger.LogNeeded())
+            {
+                DebugLogger.Log("Connected: " + Destination.ToString());
+            }
+            await StartForward().ConfigureAwait(false);
         }
 
-        private unsafe Task<byte> SendToSocket (MemoryHandle dataHandle, ushort len, bool more)
+        private unsafe ValueTask<byte> SendToSocket (MemoryHandle dataHandle, ushort len, bool more)
         {
             return _tun.executeLwipTask(() => _socket.Send((ulong)dataHandle.Pointer, len, more));
         }
@@ -277,11 +280,11 @@ namespace YtFlow.Tunnel.Adapter.Local
             }
         }
 
-        public Task Close ()
+        public ValueTask<byte> Close ()
         {
             if (Interlocked.Exchange(ref IsShutdown, 1) == 1)
             {
-                return Task.FromResult(0);
+                return new ValueTask<byte>(0);
             }
             pollCancelSource?.Cancel();
             return _tun.executeLwipTask(() => _socket.Shutdown());
@@ -317,18 +320,23 @@ namespace YtFlow.Tunnel.Adapter.Local
             return pipeWriter.GetSpan(sizeHint);
         }
 
-        public Task FlushToLocal (int byteCount, CancellationToken cancellationToken = default)
+        public async ValueTask FlushToLocal (int byteCount, CancellationToken cancellationToken = default)
         {
             pipeWriter.Advance(byteCount);
-            return pipeWriter.FlushAsync(cancellationToken).AsTask();
+            await pipeWriter.FlushAsync(cancellationToken);
         }
 
-        public Task WriteToLocal (Span<byte> e, CancellationToken cancellationToken = default)
+        private async ValueTask FlushPipe (CancellationToken cancellationToken)
+        {
+            await pipeWriter.FlushAsync(cancellationToken);
+        }
+
+        public ValueTask WriteToLocal (Span<byte> e, CancellationToken cancellationToken = default)
         {
             var memory = pipeWriter.GetSpan(e.Length);
             e.CopyTo(memory);
             pipeWriter.Advance(e.Length);
-            return pipeWriter.FlushAsync(cancellationToken).AsTask();
+            return FlushPipe(cancellationToken);
         }
 
         public virtual void CheckShutdown ()

@@ -33,22 +33,12 @@ namespace YtFlow.Tunnel.Adapter.Relay
             localAdapter.ConfirmRecvFromLocal(bytesToConfirm);
         }
 
-        public Task StartForward ()
-        {
-            return localAdapter.StartForward();
-        }
-
-        public Task FinishInbound ()
-        {
-            return localAdapter.FinishInbound();
-        }
-
-        public Task FlushToLocal (int len, CancellationToken cancellationToken = default)
+        public ValueTask FlushToLocal (int len, CancellationToken cancellationToken = default)
         {
             return localAdapter.FlushToLocal(len, cancellationToken);
         }
 
-        public Task WriteToLocal (Span<byte> data, CancellationToken cancellationToken = default)
+        public ValueTask WriteToLocal (Span<byte> data, CancellationToken cancellationToken = default)
         {
             return localAdapter.WriteToLocal(data, cancellationToken);
         }
@@ -56,11 +46,6 @@ namespace YtFlow.Tunnel.Adapter.Relay
         public Span<byte> GetSpanForWriteToLocal (int len)
         {
             return localAdapter.GetSpanForWriteToLocal(len);
-        }
-
-        public void Reset ()
-        {
-            localAdapter.Reset();
         }
         #endregion
 
@@ -72,7 +57,7 @@ namespace YtFlow.Tunnel.Adapter.Relay
             remoteAdapter.FinishSendToRemote(ex);
         }
 
-        public virtual Task Init (ILocalAdapter localAdapter)
+        public virtual ValueTask Init (ILocalAdapter localAdapter)
         {
             this.localAdapter = localAdapter;
             return remoteAdapter.Init(this);

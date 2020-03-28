@@ -36,7 +36,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
             this.port = port;
         }
 
-        public async Task Init (ILocalAdapter localAdapter)
+        public async ValueTask Init (ILocalAdapter localAdapter)
         {
             if (localAdapter.Destination.TransportProtocol == TransportProtocol.Udp)
             {

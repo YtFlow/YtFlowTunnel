@@ -111,7 +111,7 @@ namespace YtFlow.Tunnel.Adapter.Relay
             return len;
         }
 
-        public async override Task Init (ILocalAdapter localAdapter)
+        public async override ValueTask Init (ILocalAdapter localAdapter)
         {
             this.localAdapter = localAdapter;
 

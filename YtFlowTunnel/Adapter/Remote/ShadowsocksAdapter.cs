@@ -81,7 +81,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
             this.cryptor = cryptor;
         }
 
-        public async Task Init (ILocalAdapter localAdapter)
+        public async ValueTask Init (ILocalAdapter localAdapter)
         {
             this.localAdapter = localAdapter;
             var destination = localAdapter.Destination;

@@ -27,7 +27,7 @@ namespace YtFlow.Tunnel
             return taskChannel.Writer.TryWrite(act);
         }
 
-        internal Task<TResult> executeLwipTask<TResult> (Func<TResult> act)
+        internal ValueTask<TResult> executeLwipTask<TResult> (Func<TResult> act)
         {
             TaskCompletionSource<TResult> tcs = new TaskCompletionSource<TResult>();
             taskChannel.Writer.TryWrite(() =>
@@ -42,7 +42,7 @@ namespace YtFlow.Tunnel
                     tcs.TrySetException(ex);
                 }
             });
-            return tcs.Task;
+            return new ValueTask<TResult>(tcs.Task);
         }
 
         private async void doWork ()
@@ -124,6 +124,7 @@ namespace YtFlow.Tunnel
             {
                 return;
             }
+            running = false;
             DebugLogger.Log("Tun deinit req");
             wintun.PacketPoped -= W_PopPacket;
             TcpSocket.EstablishedTcp -= W_EstablishTcp;
@@ -145,7 +146,6 @@ namespace YtFlow.Tunnel
             // To avoid problems after reconnecting
             // dnsServer.Clear();
             // dispatchWorker = null;
-            running = false;
             taskChannel.Writer.TryComplete();
             // debugSocket?.Dispose();
             // debugSocket = null;

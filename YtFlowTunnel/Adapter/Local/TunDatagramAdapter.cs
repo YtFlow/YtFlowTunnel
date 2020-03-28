@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Buffers;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Threading;
 using System.Threading.Tasks;
@@ -35,7 +36,7 @@ namespace YtFlow.Tunnel.Adapter.Local
             this.tun = tun;
             Destination = destination;
             this.remoteAdapter = remoteAdapter;
-            initTask = remoteAdapter.Init(this).ContinueWith(t =>
+            initTask = remoteAdapter.Init(this).AsTask().ContinueWith(t =>
             {
                 if (t.IsCanceled || t.IsFaulted)
                 {
@@ -132,11 +133,6 @@ namespace YtFlow.Tunnel.Adapter.Local
             // throw UdpMethodNotSupported;
         }
 
-        public Task FinishInbound ()
-        {
-            throw UdpMethodNotSupported;
-        }
-
         public Span<byte> GetSpanForWriteToLocal (int len)
         {
             throw UdpMethodNotSupported;
@@ -148,7 +144,7 @@ namespace YtFlow.Tunnel.Adapter.Local
         /// <param name="data">Data to write</param>
         /// <param name="cancellationToken"></param>
         /// <returns></returns>
-        public unsafe Task WriteToLocal (Span<byte> data, CancellationToken cancellationToken = default)
+        public unsafe ValueTask WriteToLocal (Span<byte> data, CancellationToken cancellationToken = default)
         {
             // TODO: which source address to use?
             Ipv4Host src;
@@ -164,7 +160,7 @@ namespace YtFlow.Tunnel.Adapter.Local
                     }
                     else
                     {
-                        return Task.CompletedTask;
+                        return new ValueTask();
                     }
                     break;
                 default:
@@ -174,16 +170,25 @@ namespace YtFlow.Tunnel.Adapter.Local
             secondsTicked = 0;
             data.CopyTo(sendBuffer);
             var len = data.Length;
-            return tun.executeLwipTask(() =>
-            {
-                fixed (byte* ptr = sendBuffer)
-                {
-                    return tun.wintun.PushUdpPayload(src.Data, Destination.Port, localAddr, localPort, (ulong)ptr, (ushort)len);
-                }
-            });
+            return WriteUdpPacket(src.Data, Destination.Port, localAddr, localPort, sendBuffer, (ushort)len);
         }
 
-        public Task FlushToLocal (int len, CancellationToken cancellationToken = default)
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private unsafe byte UnsafeWriteUdpPacket (uint src, ushort port, uint localAddr, ushort localPort, byte[] sendBuffer, ushort len)
+        {
+            fixed (byte* ptr = sendBuffer)
+            {
+                return tun.wintun.PushUdpPayload(src, port, localAddr, localPort, (ulong)ptr, len);
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private async ValueTask WriteUdpPacket (uint src, ushort port, uint localAddr, ushort localPort, byte[] sendBuffer, ushort len)
+        {
+            await tun.executeLwipTask(() => UnsafeWriteUdpPacket(src, port, localAddr, localPort, sendBuffer, len));
+        }
+
+        public ValueTask FlushToLocal (int len, CancellationToken cancellationToken = default)
         {
             throw UdpMethodNotSupported;
         }
