@@ -16,6 +16,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
     {
         private readonly SemaphoreSlim udpSendLock = new SemaphoreSlim(1, 1);
         private readonly static ArrayPool<byte> sendArrayPool = ArrayPool<byte>.Create();
+        private readonly ChannelClosedException noEnoughIvException = new ChannelClosedException("No enough iv received");
         protected const int RECV_BUFFER_LEN = 4096;
         protected virtual int sendBufferLen => 4096;
         protected readonly string server;
@@ -24,11 +25,9 @@ namespace YtFlow.Tunnel.Adapter.Remote
         protected UdpClient udpClient;
         protected NetworkStream networkStream;
         protected ILocalAdapter localAdapter;
-        protected Channel<byte[]> outboundChan = Channel.CreateUnbounded<byte[]>(new UnboundedChannelOptions()
-        {
-            SingleReader = true
-        });
         protected ICryptor cryptor = null;
+        protected Task receiveIvTask = Task.CompletedTask;
+
         public bool RemoteDisconnected { get; set; } = false;
 
         /// <summary>
@@ -59,7 +58,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
             return Encrypt(data, outData, cryptor);
         }
 
-        public unsafe uint Decrypt (ReadOnlySpan<byte> data, Span<byte> outData, ICryptor cryptor = null)
+        public unsafe virtual uint Decrypt (ReadOnlySpan<byte> data, Span<byte> outData, ICryptor cryptor = null)
         {
             if (cryptor == null)
             {
@@ -81,7 +80,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
             this.cryptor = cryptor;
         }
 
-        public async ValueTask Init (ILocalAdapter localAdapter)
+        public async ValueTask Init (ChannelReader<byte[]> outboundChan, ILocalAdapter localAdapter)
         {
             this.localAdapter = localAdapter;
             var destination = localAdapter.Destination;
@@ -109,9 +108,9 @@ namespace YtFlow.Tunnel.Adapter.Remote
             var firstBufCancel = new CancellationTokenSource(500);
             try
             {
-                if (await outboundChan.Reader.WaitToReadAsync(firstBufCancel.Token).ConfigureAwait(false))
+                if (await outboundChan.WaitToReadAsync(firstBufCancel.Token).ConfigureAwait(false))
                 {
-                    outboundChan.Reader.TryRead(out firstBuf);
+                    outboundChan.TryRead(out firstBuf);
                 }
             }
             catch (OperationCanceledException) { }
@@ -121,77 +120,86 @@ namespace YtFlow.Tunnel.Adapter.Remote
             }
             int firstBufLen = firstBuf.Length;
             int requestPayloadLen = firstBufLen + destination.Host.Size + 4;
-            var requestPayload = sendArrayPool.Rent(requestPayloadLen);
+            // Later will be reused to store dec iv
+            var requestPayload = sendArrayPool.Rent(Math.Max(requestPayloadLen, (int)cryptor.IvLen));
             var headerLen = destination.FillSocks5StyleAddress(requestPayload);
             firstBuf.CopyTo(requestPayload.AsSpan(headerLen));
             var encryptedFirstSeg = sendArrayPool.Rent(requestPayloadLen + 66); // Reserve space for IV or salt + 2 * tag + size
             var ivLen = Encrypt(Array.Empty<byte>(), encryptedFirstSeg); // Fill IV/salt first
             var encryptedFirstSegLen = ivLen + Encrypt(requestPayload.AsSpan(0, headerLen + firstBufLen), encryptedFirstSeg.AsSpan((int)ivLen));
-            sendArrayPool.Return(requestPayload);
 
             try
             {
                 await connectTask;
                 networkStream = client.GetStream();
+            }
+            catch (Exception)
+            {
+                sendArrayPool.Return(requestPayload);
+                sendArrayPool.Return(encryptedFirstSeg, true);
+                throw;
+            }
+            try
+            {
+                // Recv iv first, then GetRecvBufSizeHint will not bother with iv stuff
+                receiveIvTask = ReceiveIv(requestPayload);
+                // TODO: necessary to wait until the first segment being sent?
                 await networkStream.WriteAsync(encryptedFirstSeg, 0, (int)encryptedFirstSegLen).ConfigureAwait(false);
             }
             finally
             {
                 sendArrayPool.Return(encryptedFirstSeg, true);
             }
-            if (firstBufLen > 0)
-            {
-                localAdapter.ConfirmRecvFromLocal((ushort)firstBufLen);
-            }
             client.NoDelay = false;
-            //await networkWriteStream.FlushAsync();
         }
 
-        public virtual async Task StartRecv (CancellationToken cancellationToken = default)
+        private async Task ReceiveIv (byte[] buf)
         {
-            byte[] buf = new byte[RECV_BUFFER_LEN];
-            while (client.Connected && networkStream.CanRead)
+            try
             {
-                var len = await networkStream.ReadAsync(buf, 0, RECV_BUFFER_LEN, cancellationToken).ConfigureAwait(false);
-                if (len == 0)
+                int ivLen = (int)cryptor.IvLen, ivReceived = 0;
+                while (ivReceived < ivLen)
                 {
-                    break;
+                    var chunkLen = await networkStream.ReadAsync(buf, ivReceived, ivLen - ivReceived);
+                    if (chunkLen == 0)
+                    {
+                        throw noEnoughIvException;
+                    }
+                    ivReceived += chunkLen;
                 }
-                uint outLen = Decrypt(buf.AsSpan(0, len), localAdapter.GetSpanForWriteToLocal(len));
-                await localAdapter.FlushToLocal((int)outLen, cancellationToken).ConfigureAwait(false);
+                Decrypt(buf.AsSpan(0, ivLen), Array.Empty<byte>(), cryptor);
             }
-        }
-
-        public void FinishSendToRemote (Exception ex = null)
-        {
-            outboundChan.Writer.TryComplete(ex);
-            if (ex != null)
+            finally
             {
-                try
-                {
-                    client?.Client.Dispose();
-                }
-                catch (ObjectDisposedException) { }
+                sendArrayPool.Return(buf);
             }
         }
 
-        public void SendToRemote (byte[] buffer)
+        public virtual ValueTask<int> GetRecvBufSizeHint (CancellationToken cancellationToken = default) => new ValueTask<int>(RECV_BUFFER_LEN);
+
+        public virtual async ValueTask<int> StartRecv (byte[] outBuf, int offset, CancellationToken cancellationToken = default)
         {
-            if (outboundChan != null)
+            if (!receiveIvTask.IsCompleted)
             {
-                _ = outboundChan.Writer.WriteAsync(buffer);
+                await receiveIvTask.ConfigureAwait(false);
             }
+            var len = await networkStream.ReadAsync(outBuf, offset, RECV_BUFFER_LEN, cancellationToken).ConfigureAwait(false);
+            if (len == 0)
+            {
+                return 0;
+            }
+            return (int)Decrypt(outBuf.AsSpan(offset, len), outBuf.AsSpan(offset));
         }
 
-        public async Task StartSend (CancellationToken cancellationToken = default)
+        public async Task StartSend (ChannelReader<byte[]> outboundChan, CancellationToken cancellationToken = default)
         {
             if (localAdapter.Destination.TransportProtocol == TransportProtocol.Udp)
             {
                 return;
             }
-            while (await outboundChan.Reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
+            while (await outboundChan.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                outboundChan.Reader.TryRead(out var data);
+                outboundChan.TryRead(out var data);
                 var offset = 0;
                 while (offset < data.Length)
                 {
@@ -209,8 +217,6 @@ namespace YtFlow.Tunnel.Adapter.Remote
                         sendArrayPool.Return(buf);
                     }
                 }
-                // await networkStream.FlushAsync();
-                localAdapter.ConfirmRecvFromLocal((ushort)data.Length);
             }
             await networkStream.FlushAsync(cancellationToken).ConfigureAwait(false);
             client.Dispose();
@@ -235,7 +241,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
                 {
                     continue;
                 }
-                await localAdapter.WriteToLocal(outDataBuffer.AsSpan(headerLen, (int)decDataLen - headerLen), cancellationToken).ConfigureAwait(false);
+                await localAdapter.WritePacketToLocal(outDataBuffer.AsSpan(headerLen, (int)decDataLen - headerLen), cancellationToken).ConfigureAwait(false);
             }
         }
 

@@ -2,7 +2,6 @@
 using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
-using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Threading;
 using System.Threading.Channels;
@@ -31,10 +30,6 @@ namespace YtFlow.Tunnel.Adapter.Remote
         private readonly StreamSocket socket = new StreamSocket();
         private IInputStream inputStream;
         private IOutputStream outputStream;
-        private readonly Channel<Memory<byte>> outboundChan = Channel.CreateUnbounded<Memory<byte>>(new UnboundedChannelOptions()
-        {
-            SingleReader = true
-        });
         private ILocalAdapter localAdapter;
         public bool RemoteDisconnected { get; set; }
 
@@ -79,7 +74,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
             return len;
         }
 
-        public async ValueTask Init (ILocalAdapter localAdapter)
+        public async ValueTask Init (ChannelReader<byte[]> outboundChan, ILocalAdapter localAdapter)
         {
             this.localAdapter = localAdapter;
             if (allowInsecure)
@@ -95,13 +90,13 @@ namespace YtFlow.Tunnel.Adapter.Remote
             // TODO: custom certificate, server name
 
             var destination = localAdapter.Destination;
-            Memory<byte> firstBuf = Array.Empty<byte>();
+            var firstBuf = Array.Empty<byte>();
             var firstBufCancel = new CancellationTokenSource(500);
             try
             {
-                if (await outboundChan.Reader.WaitToReadAsync(firstBufCancel.Token).ConfigureAwait(false))
+                if (await outboundChan.WaitToReadAsync(firstBufCancel.Token).ConfigureAwait(false))
                 {
-                    outboundChan.Reader.TryRead(out firstBuf);
+                    outboundChan.TryRead(out firstBuf);
                 }
             }
             catch (OperationCanceledException) { }
@@ -114,7 +109,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
             try
             {
                 var headerLen = FillTrojanRequest(requestPayload, destination);
-                firstBuf.Span.CopyTo(requestPayload.AsSpan(headerLen));
+                firstBuf.CopyTo(requestPayload.AsSpan(headerLen));
 
                 await connectTask;
                 inputStream = socket.InputStream;
@@ -125,89 +120,42 @@ namespace YtFlow.Tunnel.Adapter.Remote
             {
                 sendArrayPool.Return(requestPayload);
             }
-            if (firstBufLen > 0)
-            {
-                localAdapter.ConfirmRecvFromLocal((ushort)firstBufLen);
-            }
         }
 
-        public async Task StartRecv (CancellationToken cancellationToken = default)
+        public ValueTask<int> GetRecvBufSizeHint (CancellationToken cancellationToken = default) => new ValueTask<int>(RECV_BUFFER_LEN);
+
+        public async ValueTask<int> StartRecv (byte[] outBuf, int offset, CancellationToken cancellationToken = default)
         {
-            byte[] buf = new byte[RECV_BUFFER_LEN];
-            while (!cancellationToken.IsCancellationRequested)
+            var recvBuf = await inputStream.ReadAsync(outBuf.AsBuffer(offset, 0, RECV_BUFFER_LEN), RECV_BUFFER_LEN, InputStreamOptions.Partial).AsTask(cancellationToken).ConfigureAwait(false);
+            if (recvBuf.Length == 0)
             {
-                var recvBuf = await inputStream.ReadAsync(buf.AsBuffer(), RECV_BUFFER_LEN, InputStreamOptions.Partial).AsTask(cancellationToken).ConfigureAwait(false);
-                if (recvBuf.Length == 0)
-                {
-                    break;
-                }
-                await localAdapter.WriteToLocal(buf.AsSpan(0, (int)recvBuf.Length), cancellationToken);
+                return 0;
             }
+            return (int)recvBuf.Length;
         }
 
-        public async Task StartSend (CancellationToken cancellationToken = default)
+        public async Task StartSend (ChannelReader<byte[]> outboundChan, CancellationToken cancellationToken = default)
         {
-            while (await outboundChan.Reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
+            while (await outboundChan.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
             {
                 var totalBytes = 0;
-                var packetsToSend = new List<ArraySegment<byte>>();
-                while (outboundChan.Reader.TryRead(out var data))
+                var packetsToSend = new List<byte[]>();
+                while (outboundChan.TryRead(out var segment))
                 {
-                    if (MemoryMarshal.TryGetArray<byte>(data, out var segment))
-                    {
-                        packetsToSend.Add(segment);
-                        totalBytes += segment.Count;
-                    }
+                    packetsToSend.Add(segment);
+                    totalBytes += segment.Length;
                 }
                 var pendingTasks = new Task[packetsToSend.Count];
-                try
+                for (var index = 0; index < packetsToSend.Count; ++index)
                 {
-                    for (var index = 0; index < packetsToSend.Count; ++index)
-                    {
-                        var segment = packetsToSend[index];
-                        var buffer = segment.Array.AsBuffer(segment.Offset, segment.Count);
-                        pendingTasks[index] = outputStream.WriteAsync(buffer).AsTask(cancellationToken);
-                    }
-                    await Task.WhenAll(pendingTasks).ConfigureAwait(false);
+                    var segment = packetsToSend[index];
+                    pendingTasks[index] = outputStream.WriteAsync(segment.AsBuffer()).AsTask(cancellationToken);
                 }
-                finally
-                {
-                    if (localAdapter.Destination.TransportProtocol == TransportProtocol.Udp)
-                    {
-                        // The arrays are from our array pool.
-                        foreach (var segment in packetsToSend)
-                        {
-                            sendArrayPool.Return(segment.Array);
-                        }
-                    }
-                }
-                localAdapter.ConfirmRecvFromLocal((ushort)totalBytes);
+                await Task.WhenAll(pendingTasks).ConfigureAwait(false);
             }
             await outputStream.FlushAsync().AsTask(cancellationToken).ConfigureAwait(false);
             outputStream.Dispose();
             socket.Dispose();
-        }
-
-        public async void FinishSendToRemote (Exception ex = null)
-        {
-            outboundChan.Writer.TryComplete(ex);
-            if (ex != null && socket != null)
-            {
-                try
-                {
-                    await socket.CancelIOAsync().AsTask().ConfigureAwait(false);
-                    socket?.Dispose();
-                }
-                catch (ObjectDisposedException) { }
-            }
-        }
-
-        public async void SendToRemote (byte[] buffer)
-        {
-            if (outboundChan != null)
-            {
-                await outboundChan.Writer.WriteAsync(buffer).ConfigureAwait(false);
-            }
         }
 
         public async Task StartRecvPacket (CancellationToken cancellationToken = default)
@@ -256,7 +204,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
                         goto END;
                     }
                 }
-                await localAdapter.WriteToLocal(buf.AsSpan(offset - len, len), cancellationToken).ConfigureAwait(false);
+                await localAdapter.WritePacketToLocal(buf.AsSpan(offset - len, len), cancellationToken).ConfigureAwait(false);
                 unconsumedLen -= len;
                 if (unconsumedLen > 0)
                 {
@@ -268,30 +216,23 @@ namespace YtFlow.Tunnel.Adapter.Remote
             ;
         }
 
-        public void SendPacketToRemote (Memory<byte> data, Destination.Destination destination)
+        public async void SendPacketToRemote (Memory<byte> data, Destination.Destination destination)
         {
-            if (outboundChan == null)
-            {
-                return;
-            }
             var sendBuf = sendArrayPool.Rent(data.Length + destination.Host.Size + 8);
-            // Return the array when it was sent or checking shutdown
-
-            var headerLen = FillTrojanRequest(sendBuf, destination, true, (ushort)data.Length);
-            data.Span.CopyTo(sendBuf.AsSpan(headerLen));
-            _ = outboundChan.Writer.WriteAsync(sendBuf.AsMemory(0, headerLen + data.Length));
+            try
+            {
+                var headerLen = FillTrojanRequest(sendBuf, destination, true, (ushort)data.Length);
+                data.Span.CopyTo(sendBuf.AsSpan(headerLen));
+                await outputStream.WriteAsync(sendBuf.AsBuffer(0, headerLen + data.Length));
+            }
+            finally
+            {
+                sendArrayPool.Return(sendBuf);
+            }
         }
 
         public void CheckShutdown ()
         {
-            if (outboundChan != null && localAdapter?.Destination.TransportProtocol == TransportProtocol.Udp)
-            {
-                while (outboundChan.Reader.TryRead(out var memory))
-                {
-                    MemoryMarshal.TryGetArray<byte>(memory, out var arraySegment);
-                    sendArrayPool.Return(arraySegment.Array);
-                }
-            }
             // outboundChan = null;
             try
             {

@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using YtCrypto;
@@ -13,6 +14,8 @@ namespace YtFlow.Tunnel.Adapter.Remote
         private const int SIZE_MASK = 0x3fff;
         private const int READ_SIZE_SIZE = TAG_SIZE + 2;
         protected override int sendBufferLen => SIZE_MASK;
+        private byte[] sizeBuf = new byte[READ_SIZE_SIZE];
+        private int sizeToRead = 0;
 
         public ShadowsocksAeadAdapter (string server, int port, ICryptor cryptor) : base(server, port, cryptor)
         {
@@ -65,6 +68,13 @@ namespace YtFlow.Tunnel.Adapter.Remote
             return (uint)RealEncrypt(data, outData.Slice(len, TAG_SIZE), outData.Slice(0, len), cryptor) + TAG_SIZE;
         }
 
+        // For ShadowsocksAdapter to receive IV
+        public override uint Decrypt (ReadOnlySpan<byte> data, Span<byte> outData, ICryptor cryptor = null)
+        {
+            return (uint)Decrypt(data, Array.Empty<byte>(), Array.Empty<byte>(), cryptor);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static unsafe int Decrypt (ReadOnlySpan<byte> data, ReadOnlySpan<byte> tag, Span<byte> outData, ICryptor cryptor)
         {
             fixed (byte* dataPtr = &data.GetPinnableReference(), tagPtr = &tag.GetPinnableReference(), outDataPtr = &outData.GetPinnableReference())
@@ -78,79 +88,58 @@ namespace YtFlow.Tunnel.Adapter.Remote
             }
         }
 
-        private async Task<int> ReadAtLeast (byte[] buffer, int offset, int desiredLength, CancellationToken cancellationToken)
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static int DecryptSize (ReadOnlySpan<byte> data, ReadOnlySpan<byte> tag, ICryptor cryptor)
         {
-            if (offset + desiredLength > buffer.Length)
+            Span<byte> decSizeBuf = stackalloc byte[2];
+            var decResult = Decrypt(data, tag, decSizeBuf, cryptor);
+            if (decResult != 2)
+            {
+                throw new AeadOperationException(decResult);
+            }
+            return decSizeBuf[0] << 8 | decSizeBuf[1];
+        }
+
+        private async ValueTask<bool> ReadExact (byte[] buffer, int offset, int desiredLength, CancellationToken cancellationToken)
+        {
+            int targetOffset = offset + desiredLength;
+            if (targetOffset > buffer.Length)
             {
                 throw new ArgumentOutOfRangeException($"{nameof(offset)} + {nameof(desiredLength)} must not exceed buffer length.", nameof(desiredLength));
             }
-            int readLength = 0;
             do
             {
-                var chunkLen = await networkStream.ReadAsync(buffer, offset, buffer.Length - offset, cancellationToken).ConfigureAwait(false);
+                var chunkLen = await networkStream.ReadAsync(buffer, offset, targetOffset - offset, cancellationToken).ConfigureAwait(false);
                 if (chunkLen == 0)
                 {
-                    return readLength;
+                    return false;
                 }
                 offset += chunkLen;
-                readLength += chunkLen;
-            } while (readLength < desiredLength);
-            return readLength;
+            } while (offset < targetOffset);
+            return true;
         }
 
-        public override async Task StartRecv (CancellationToken cancellationToken = default)
+        public override async ValueTask<int> GetRecvBufSizeHint (CancellationToken cancellationToken = default)
         {
-            int size, currentChunkSize, ivLen = (int)cryptor.IvLen;
-            byte[] dataBuffer = new byte[sendBufferLen + ivLen + TAG_SIZE * 2 + 2];
-            byte[] sizeBuffer = new byte[2];
-            // Receive salt
-            int readSize = await ReadAtLeast(dataBuffer, 0, ivLen, cancellationToken).ConfigureAwait(false);
-            if (readSize < ivLen)
+            if (!receiveIvTask.IsCompleted)
             {
-                return;
+                await receiveIvTask.ConfigureAwait(false);
             }
-            Decrypt(dataBuffer.AsSpan(0, ivLen), Array.Empty<byte>(), Array.Empty<byte>(), cryptor);
-            readSize -= ivLen;
-            if (readSize > 0)
+            if (!await ReadExact(sizeBuf, 0, READ_SIZE_SIZE, cancellationToken).ConfigureAwait(false))
             {
-                Array.Copy(dataBuffer, ivLen, dataBuffer, 0, readSize);
+                return 0;
             }
-            while (client.Connected && networkStream.CanRead)
+            sizeToRead = DecryptSize(sizeBuf.AsSpan(0, 2), sizeBuf.AsSpan(2, TAG_SIZE), cryptor);
+            return sizeToRead + TAG_SIZE;
+        }
+
+        public override async ValueTask<int> StartRecv (byte[] outBuf, int offset, CancellationToken cancellationToken = default)
+        {
+            if (!await ReadExact(outBuf, offset, sizeToRead + TAG_SIZE, cancellationToken).ConfigureAwait(false))
             {
-                // [encrypted payload length][length tag]
-                if (readSize < READ_SIZE_SIZE)
-                {
-                    readSize += await ReadAtLeast(dataBuffer, readSize, READ_SIZE_SIZE - readSize, cancellationToken).ConfigureAwait(false);
-                }
-                if (readSize < READ_SIZE_SIZE)
-                {
-                    break;
-                }
-                Decrypt(dataBuffer.AsSpan(0, 2), dataBuffer.AsSpan(2, TAG_SIZE), sizeBuffer, cryptor);
-                size = sizeBuffer[0] << 8 | sizeBuffer[1];
-                currentChunkSize = READ_SIZE_SIZE + size + TAG_SIZE;
-
-                // [encrypted payload][payload tag]
-                if (readSize < currentChunkSize)
-                {
-                    readSize += await ReadAtLeast(dataBuffer, readSize, currentChunkSize - readSize, cancellationToken).ConfigureAwait(false);
-                }
-                if (readSize < currentChunkSize)
-                {
-                    break;
-                }
-                Decrypt(dataBuffer.AsSpan(READ_SIZE_SIZE, size), dataBuffer.AsSpan(READ_SIZE_SIZE + size, TAG_SIZE), localAdapter.GetSpanForWriteToLocal(size), cryptor);
-
-                // Copy remaining data to the front
-                if (readSize > currentChunkSize)
-                {
-                    Array.Copy(dataBuffer, currentChunkSize, dataBuffer, 0, readSize - currentChunkSize);
-                }
-                readSize -= currentChunkSize;
-
-                // TODO: flush now?
-                await localAdapter.FlushToLocal(size, cancellationToken).ConfigureAwait(false);
+                return 0;
             }
+            return Decrypt(outBuf.AsSpan(offset, sizeToRead), outBuf.AsSpan(offset + sizeToRead, TAG_SIZE), outBuf.AsSpan(offset), cryptor);
         }
 
         public async override Task StartRecvPacket (CancellationToken cancellationToken = default)
@@ -186,12 +175,12 @@ namespace YtFlow.Tunnel.Adapter.Remote
                     continue;
                 }
 
-                var headerLen = Destination.Destination.TryParseSocks5StyleAddress(outDataBuffer.AsSpan(0, (int)decDataLen), out _, TransportProtocol.Udp);
+                var headerLen = Destination.Destination.TryParseSocks5StyleAddress(outDataBuffer.AsSpan(0, decDataLen), out _, TransportProtocol.Udp);
                 if (headerLen <= 0)
                 {
                     continue;
                 }
-                await localAdapter.WriteToLocal(outDataBuffer.AsSpan(headerLen, (int)decDataLen - headerLen), cancellationToken).ConfigureAwait(false);
+                await localAdapter.WritePacketToLocal(outDataBuffer.AsSpan(headerLen, decDataLen - headerLen), cancellationToken).ConfigureAwait(false);
             }
         }
 

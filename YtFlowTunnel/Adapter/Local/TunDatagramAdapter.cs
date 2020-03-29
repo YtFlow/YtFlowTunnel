@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using YtFlow.Tunnel.Adapter.Destination;
 using YtFlow.Tunnel.Adapter.Remote;
@@ -19,6 +20,7 @@ namespace YtFlow.Tunnel.Adapter.Local
         private static readonly NotSupportedException UdpMethodNotSupported = new NotSupportedException("This method call is not supported for UDP sockets.");
         internal static readonly Dictionary<(ushort LocalPort, Destination.Destination Remote), TunDatagramAdapter> socketMap = new Dictionary<(ushort, Destination.Destination), TunDatagramAdapter>();
         private static readonly ArrayPool<byte> udpPayloadArrayPool = ArrayPool<byte>.Create();
+        private static readonly ChannelReader<byte[]> CompletedChannelReader = CreateCompletedChannelReader();
         private readonly TunInterface tun;
         private readonly uint localAddr;
         private readonly ushort localPort;
@@ -29,6 +31,13 @@ namespace YtFlow.Tunnel.Adapter.Local
 
         private IRemoteAdapter remoteAdapter;
 
+        private static ChannelReader<byte[]> CreateCompletedChannelReader ()
+        {
+            var channel = Channel.CreateBounded<byte[]>(1);
+            channel.Writer.Complete();
+            return channel.Reader;
+        }
+
         internal TunDatagramAdapter (TunInterface tun, IRemoteAdapter remoteAdapter, Destination.Destination destination, uint localAddr, ushort localPort)
         {
             this.localAddr = localAddr;
@@ -36,7 +45,7 @@ namespace YtFlow.Tunnel.Adapter.Local
             this.tun = tun;
             Destination = destination;
             this.remoteAdapter = remoteAdapter;
-            initTask = remoteAdapter.Init(this).AsTask().ContinueWith(t =>
+            initTask = remoteAdapter.Init(CompletedChannelReader, this).AsTask().ContinueWith(t =>
             {
                 if (t.IsCanceled || t.IsFaulted)
                 {
@@ -56,7 +65,7 @@ namespace YtFlow.Tunnel.Adapter.Local
             }).Unwrap();
         }
 
-        public async Task StartForward ()
+        private async Task StartForward ()
         {
             var recvCancel = new CancellationTokenSource();
             var sendCancel = new CancellationTokenSource();
@@ -72,48 +81,20 @@ namespace YtFlow.Tunnel.Adapter.Local
                   {
                       sendCancel?.Cancel();
                       recvCancel?.Cancel();
-                      remoteAdapter.FinishSendToRemote();
                   }
               });
             try
             {
-                await Task.WhenAll(remoteAdapter.StartRecvPacket(recvCancel.Token).ContinueWith(t =>
+                await remoteAdapter.StartRecvPacket(recvCancel.Token).ConfigureAwait(false);
+                if (DebugLogger.LogNeeded())
                 {
-                    sendCancel?.Cancel();
-                    timeoutCancel?.Cancel();
-                    if (t.IsFaulted)
-                    {
-                        var ex = t.Exception.Flatten().GetBaseException();
-                        DebugLogger.Log($"Recv error: {Destination}: {ex}");
-                    }
-                    else if (t.Status == TaskStatus.RanToCompletion)
-                    {
-                        if (DebugLogger.LogNeeded())
-                        {
-                            DebugLogger.Log("Close!: " + Destination);
-                        }
-                    }
-                    return t;
-                }).Unwrap(), remoteAdapter.StartSend(sendCancel.Token).ContinueWith(t =>
-                {
-                    if (t.IsFaulted)
-                    {
-                        recvCancel?.Cancel();
-                        timeoutCancel?.Cancel();
-                        var ex = t.Exception.Flatten().GetBaseException();
-                        if (!(ex is LwipException lwipEx) || lwipEx.LwipCode != -14) // lwIP Reset
-                        {
-                            DebugLogger.Log($"Send error: {Destination}: {ex}");
-                        }
-                    }
-                    return t;
-                }).Unwrap()).ConfigureAwait(false);
+                    DebugLogger.Log("Close!: " + Destination);
+                }
             }
             catch (OperationCanceledException) { }
-            catch (Exception)
+            catch (Exception ex)
             {
-                DebugLogger.Log("Reset!: " + Destination);
-                Reset();
+                DebugLogger.Log($"Recv error: {Destination}: {ex}");
             }
             finally
             {
@@ -122,20 +103,11 @@ namespace YtFlow.Tunnel.Adapter.Local
                     remoteAdapter.RemoteDisconnected = true;
                 }
                 timeoutCancel.Cancel();
+                sendCancel?.Cancel();
                 recvCancel.Dispose();
                 timeoutCancel.Dispose();
             }
             CheckShutdown();
-        }
-
-        public void ConfirmRecvFromLocal (ushort bytesToConfirm)
-        {
-            // throw UdpMethodNotSupported;
-        }
-
-        public Span<byte> GetSpanForWriteToLocal (int len)
-        {
-            throw UdpMethodNotSupported;
         }
 
         /// <summary>
@@ -144,7 +116,7 @@ namespace YtFlow.Tunnel.Adapter.Local
         /// <param name="data">Data to write</param>
         /// <param name="cancellationToken"></param>
         /// <returns></returns>
-        public unsafe ValueTask WriteToLocal (Span<byte> data, CancellationToken cancellationToken = default)
+        public unsafe ValueTask WritePacketToLocal (Span<byte> data, CancellationToken cancellationToken = default)
         {
             // TODO: which source address to use?
             Ipv4Host src;
@@ -188,16 +160,6 @@ namespace YtFlow.Tunnel.Adapter.Local
             await tun.executeLwipTask(() => UnsafeWriteUdpPacket(src, port, localAddr, localPort, sendBuffer, len));
         }
 
-        public ValueTask FlushToLocal (int len, CancellationToken cancellationToken = default)
-        {
-            throw UdpMethodNotSupported;
-        }
-
-        public void Reset ()
-        {
-            throw UdpMethodNotSupported;
-        }
-
         public void CheckShutdown ()
         {
             var entry = (localPort, Destination);
@@ -205,7 +167,7 @@ namespace YtFlow.Tunnel.Adapter.Local
             {
                 socketMap.Remove(entry);
             }
-            remoteAdapter?.CheckShutdown();
+            remoteAdapter.CheckShutdown();
         }
 
         internal static async void ProcessIpPayload (byte[] packet, TunInterface tun)

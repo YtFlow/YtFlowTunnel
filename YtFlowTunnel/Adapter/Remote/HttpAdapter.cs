@@ -24,10 +24,6 @@ namespace YtFlow.Tunnel.Adapter.Remote
         };
         private NetworkStream networkStream;
         private ILocalAdapter localAdapter;
-        private readonly Channel<byte[]> outboundChan = Channel.CreateUnbounded<byte[]>(new UnboundedChannelOptions()
-        {
-            SingleReader = true
-        });
         public bool RemoteDisconnected { get; set; } = false;
 
         public HttpAdapter (string server, int port)
@@ -36,7 +32,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
             this.port = port;
         }
 
-        public async ValueTask Init (ILocalAdapter localAdapter)
+        public async ValueTask Init (ChannelReader<byte[]> outboundChan, ILocalAdapter localAdapter)
         {
             if (localAdapter.Destination.TransportProtocol == TransportProtocol.Udp)
             {
@@ -100,64 +96,33 @@ namespace YtFlow.Tunnel.Adapter.Remote
                 throw new InvalidOperationException("Unrecognized remote header: " + Encoding.UTF8.GetString(responseBuf, 0, responseLen));
             }
             headerStart += 4;
-            if (headerStart >= responseLen)
-            {
-                // No initial data
-            }
-            else
-            {
-                var _ = localAdapter.WriteToLocal(responseBuf.AsSpan(headerStart, responseLen));
-            }
+            // Initial data?
             client.NoDelay = false;
         }
 
-        public void FinishSendToRemote (Exception ex = null)
+        public async Task StartSend (ChannelReader<byte[]> outboundChan, CancellationToken cancellationToken = default)
         {
-            outboundChan.Writer.TryComplete(ex);
-            if (ex != null)
+            while (await outboundChan.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                try
-                {
-                    client?.Client.Dispose();
-                }
-                catch (ObjectDisposedException) { }
-            }
-        }
-
-        public void SendToRemote (byte[] buffer)
-        {
-            if (outboundChan != null)
-            {
-                _ = outboundChan.Writer.WriteAsync(buffer);
-            }
-        }
-
-        public async Task StartSend (CancellationToken cancellationToken = default)
-        {
-            while (await outboundChan.Reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
-            {
-                outboundChan.Reader.TryRead(out var data);
+                outboundChan.TryRead(out var data);
                 // TODO: batch write
                 await networkStream.WriteAsync(data, 0, data.Length, cancellationToken).ConfigureAwait(false);
                 // await networkStream.FlushAsync();
-                localAdapter.ConfirmRecvFromLocal((ushort)data.Length);
             }
             await networkStream.FlushAsync(cancellationToken).ConfigureAwait(false);
             client.Client.Shutdown(SocketShutdown.Send);
         }
 
-        public async Task StartRecv (CancellationToken cancellationToken = default)
+        public ValueTask<int> GetRecvBufSizeHint (CancellationToken cancellationToken = default) => new ValueTask<int>(RECV_BUFFER_LEN);
+
+        public async ValueTask<int> StartRecv (byte[] outBuf, int offset, CancellationToken cancellationToken = default)
         {
-            byte[] buf = new byte[RECV_BUFFER_LEN];
-            while (client.Connected && networkStream.CanRead)
+            var len = await networkStream.ReadAsync(outBuf, offset, RECV_BUFFER_LEN, cancellationToken).ConfigureAwait(false);
+            if (len == 0)
             {
-                var len = await networkStream.ReadAsync(buf, 0, RECV_BUFFER_LEN, cancellationToken).ConfigureAwait(false);
-                if (len == 0)
-                {
-                    break;
-                }
-                await localAdapter.WriteToLocal(buf.AsSpan(0, len), cancellationToken).ConfigureAwait(false);
+                return 0;
             }
+            return len;
         }
 
         public void CheckShutdown ()

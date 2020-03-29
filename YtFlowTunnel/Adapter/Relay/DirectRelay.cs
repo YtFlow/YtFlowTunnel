@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using YtFlow.Tunnel.Adapter.Local;
 using YtFlow.Tunnel.Adapter.Remote;
@@ -23,59 +24,29 @@ namespace YtFlow.Tunnel.Adapter.Relay
             set => localAdapter.Destination = value;
         }
 
-        public void CheckShutdown ()
+        public ValueTask WritePacketToLocal (Span<byte> data, CancellationToken cancellationToken = default)
         {
-            remoteAdapter.CheckShutdown();
-        }
-
-        public void ConfirmRecvFromLocal (ushort bytesToConfirm)
-        {
-            localAdapter.ConfirmRecvFromLocal(bytesToConfirm);
-        }
-
-        public ValueTask FlushToLocal (int len, CancellationToken cancellationToken = default)
-        {
-            return localAdapter.FlushToLocal(len, cancellationToken);
-        }
-
-        public ValueTask WriteToLocal (Span<byte> data, CancellationToken cancellationToken = default)
-        {
-            return localAdapter.WriteToLocal(data, cancellationToken);
-        }
-
-        public Span<byte> GetSpanForWriteToLocal (int len)
-        {
-            return localAdapter.GetSpanForWriteToLocal(len);
+            return localAdapter.WritePacketToLocal(data, cancellationToken);
         }
         #endregion
 
         #region RemoteAdapter
         public bool RemoteDisconnected { get => remoteAdapter.RemoteDisconnected; set => remoteAdapter.RemoteDisconnected = value; }
 
-        public void FinishSendToRemote (Exception ex = null)
-        {
-            remoteAdapter.FinishSendToRemote(ex);
-        }
-
-        public virtual ValueTask Init (ILocalAdapter localAdapter)
+        public virtual ValueTask Init (ChannelReader<byte[]> outboundChan, ILocalAdapter localAdapter)
         {
             this.localAdapter = localAdapter;
-            return remoteAdapter.Init(this);
+            return remoteAdapter.Init(outboundChan, this);
         }
 
-        public virtual void SendToRemote (byte[] buffer)
+        public ValueTask<int> StartRecv (byte[] outBuf, int offset, CancellationToken cancellationToken = default)
         {
-            remoteAdapter.SendToRemote(buffer);
+            return remoteAdapter.StartRecv(outBuf, offset, cancellationToken);
         }
 
-        public virtual Task StartRecv (CancellationToken cancellationToken = default)
+        public Task StartSend (ChannelReader<byte[]> outboundChan, CancellationToken cancellationToken = default)
         {
-            return remoteAdapter.StartRecv(cancellationToken);
-        }
-
-        public Task StartSend (CancellationToken cancellationToken = default)
-        {
-            return remoteAdapter.StartSend(cancellationToken);
+            return remoteAdapter.StartSend(outboundChan, cancellationToken);
         }
 
         public Task StartRecvPacket (CancellationToken cancellationToken = default)
@@ -86,6 +57,13 @@ namespace YtFlow.Tunnel.Adapter.Relay
         public void SendPacketToRemote (Memory<byte> data, Destination.Destination destination)
         {
             remoteAdapter.SendPacketToRemote(data, destination);
+        }
+
+        public ValueTask<int> GetRecvBufSizeHint (CancellationToken cancellationToken = default) => remoteAdapter.GetRecvBufSizeHint(cancellationToken);
+
+        public void CheckShutdown ()
+        {
+            remoteAdapter.CheckShutdown();
         }
         #endregion
     }

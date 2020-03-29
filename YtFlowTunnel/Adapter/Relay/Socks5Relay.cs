@@ -1,5 +1,5 @@
 ﻿using System;
-using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using YtFlow.Tunnel.Adapter.Destination;
 using YtFlow.Tunnel.Adapter.Local;
@@ -8,12 +8,6 @@ using YtFlow.Tunnel.DNS;
 
 namespace YtFlow.Tunnel.Adapter.Relay
 {
-    enum Socks5ClientRequestStatus
-    {
-        None,
-        Greeted,
-        RequestSent
-    }
     internal class Socks5Relay : DirectRelay
     {
         private static readonly byte[] ServerChoicePayload = new byte[] { 5, 0 };
@@ -24,9 +18,6 @@ namespace YtFlow.Tunnel.Adapter.Relay
         private static readonly ArgumentException BadRequestException = new ArgumentException("Bad socks5 request message");
         private static readonly NotImplementedException UnknownTypeException = new NotImplementedException("Unknown socks5 request type");
 
-        private Socks5ClientRequestStatus clientRequestStatus = Socks5ClientRequestStatus.None;
-        private readonly TaskCompletionSource<byte[]> greetingTcs = new TaskCompletionSource<byte[]>();
-        private readonly TaskCompletionSource<byte[]> requestTcs = new TaskCompletionSource<byte[]>();
         private byte[] preparedUdpResponseHeader;
 
         public Socks5Relay (IRemoteAdapter remoteAdapter) : base(remoteAdapter)
@@ -111,61 +102,26 @@ namespace YtFlow.Tunnel.Adapter.Relay
             return len;
         }
 
-        public async override ValueTask Init (ILocalAdapter localAdapter)
+        public async override ValueTask Init (ChannelReader<byte[]> outboundChan, ILocalAdapter localAdapter)
         {
             this.localAdapter = localAdapter;
 
-            var greeting = await greetingTcs.Task.ConfigureAwait(false);
+            var greeting = await outboundChan.ReadAsync().ConfigureAwait(false);
             if (greeting.Length < 3 || greeting[0] != 5 || greeting[2] != 0)
             {
                 throw BadGreetingException;
             }
-            await WriteToLocal(ServerChoicePayload);
+            await WritePacketToLocal(ServerChoicePayload);
 
-            var request = await requestTcs.Task.ConfigureAwait(false);
+            var request = await outboundChan.ReadAsync().ConfigureAwait(false);
             Destination = ParseDestinationFromRequest(request);
             if (Destination.TransportProtocol == TransportProtocol.Udp)
             {
                 throw UnknownTypeException;
             }
-            await WriteToLocal(DummyResponsePayload);
+            await WritePacketToLocal(DummyResponsePayload);
 
-            await base.Init(localAdapter).ConfigureAwait(false);
-        }
-
-        public override Task StartRecv (CancellationToken cancellationToken = default)
-        {
-            switch (Destination.TransportProtocol)
-            {
-                case TransportProtocol.Tcp:
-                    return base.StartRecv(cancellationToken);
-            }
-            throw new NotImplementedException();
-        }
-
-        public override void SendToRemote (byte[] buffer)
-        {
-            switch (clientRequestStatus)
-            {
-                case Socks5ClientRequestStatus.None:
-                    clientRequestStatus = Socks5ClientRequestStatus.Greeted;
-                    greetingTcs.TrySetResult(buffer);
-                    ConfirmRecvFromLocal((ushort)buffer.Length);
-                    break;
-                case Socks5ClientRequestStatus.Greeted:
-                    clientRequestStatus = Socks5ClientRequestStatus.RequestSent;
-                    requestTcs.TrySetResult(buffer);
-                    ConfirmRecvFromLocal((ushort)buffer.Length);
-                    break;
-                case Socks5ClientRequestStatus.RequestSent:
-                    switch (Destination.TransportProtocol)
-                    {
-                        case TransportProtocol.Tcp:
-                            base.SendToRemote(buffer);
-                            break;
-                    }
-                    break;
-            }
+            await base.Init(outboundChan, localAdapter).ConfigureAwait(false);
         }
     }
 }
