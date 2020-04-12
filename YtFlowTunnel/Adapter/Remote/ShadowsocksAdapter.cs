@@ -17,14 +17,13 @@ namespace YtFlow.Tunnel.Adapter.Remote
         private readonly SemaphoreSlim udpSendLock = new SemaphoreSlim(1, 1);
         private readonly static ArrayPool<byte> sendArrayPool = ArrayPool<byte>.Create();
         private readonly ChannelClosedException noEnoughIvException = new ChannelClosedException("No enough iv received");
-        protected const int RECV_BUFFER_LEN = 4096;
         protected virtual int sendBufferLen => 4096;
         protected readonly string server;
         protected readonly int port;
         protected TcpClient client;
         protected UdpClient udpClient;
         protected NetworkStream networkStream;
-        protected ILocalAdapter localAdapter;
+        // protected ILocalAdapter localAdapter;
         protected ICryptor cryptor = null;
         protected Task receiveIvTask = Task.CompletedTask;
 
@@ -82,7 +81,6 @@ namespace YtFlow.Tunnel.Adapter.Remote
 
         public async ValueTask Init (ChannelReader<byte[]> outboundChan, ILocalAdapter localAdapter)
         {
-            this.localAdapter = localAdapter;
             var destination = localAdapter.Destination;
             ConfiguredTaskAwaitable connectTask;
             switch (destination.TransportProtocol)
@@ -175,31 +173,34 @@ namespace YtFlow.Tunnel.Adapter.Remote
             }
         }
 
-        public virtual ValueTask<int> GetRecvBufSizeHint (CancellationToken cancellationToken = default) => new ValueTask<int>(RECV_BUFFER_LEN);
+        public virtual ValueTask<int> GetRecvBufSizeHint (int preferredSize, CancellationToken cancellationToken = default) => new ValueTask<int>(preferredSize);
 
-        public virtual async ValueTask<int> StartRecv (byte[] outBuf, int offset, CancellationToken cancellationToken = default)
+        public virtual async ValueTask<int> StartRecv (ArraySegment<byte> outBuf, CancellationToken cancellationToken = default)
         {
             if (!receiveIvTask.IsCompleted)
             {
                 await receiveIvTask.ConfigureAwait(false);
             }
-            var len = await networkStream.ReadAsync(outBuf, offset, RECV_BUFFER_LEN, cancellationToken).ConfigureAwait(false);
+            var len = await networkStream.ReadAsync(outBuf.Array, outBuf.Offset, outBuf.Count, cancellationToken).ConfigureAwait(false);
             if (len == 0)
             {
                 return 0;
             }
-            return (int)Decrypt(outBuf.AsSpan(offset, len), outBuf.AsSpan(offset));
+            return (int)Decrypt(outBuf.AsSpan(0, len), outBuf.AsSpan(0, len));
         }
 
         public async Task StartSend (ChannelReader<byte[]> outboundChan, CancellationToken cancellationToken = default)
         {
-            if (localAdapter.Destination.TransportProtocol == TransportProtocol.Udp)
+            if (client == null) // UDP
             {
                 return;
             }
             while (await outboundChan.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                outboundChan.TryRead(out var data);
+                if (!outboundChan.TryRead(out var data))
+                {
+                    continue;
+                }
                 var offset = 0;
                 while (offset < data.Length)
                 {
@@ -222,7 +223,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
             client.Dispose();
         }
 
-        public async virtual Task StartRecvPacket (CancellationToken cancellationToken = default)
+        public async virtual Task StartRecvPacket (ILocalAdapter localAdapter, CancellationToken cancellationToken = default)
         {
             var outDataBuffer = new byte[sendBufferLen + 66];
             while (!cancellationToken.IsCancellationRequested && udpClient != null)
@@ -306,7 +307,6 @@ namespace YtFlow.Tunnel.Adapter.Remote
             catch (ObjectDisposedException) { }
             // client = null;
             // udpClient = null;
-            localAdapter = null;
         }
     }
 }

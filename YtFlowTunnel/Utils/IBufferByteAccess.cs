@@ -1,0 +1,25 @@
+// https://github.com/dotnet/runtime/blob/c06810bf654e09f016fe34dd2b4ac31fb73370a1/src/libraries/System.Runtime.WindowsRuntime/src/System/Runtime/InteropServices/WindowsRuntime/IBufferByteAccess.cs
+
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
+
+using System.Security;
+using GUID = System.Runtime.InteropServices.GuidAttribute;
+
+namespace System.Runtime.InteropServices.WindowsRuntime
+{
+    /// <summary>
+    /// WinRT's <code>IBufferByteAccess</code> interface definition.
+    /// </summary>
+    [ComImport]
+    [GUID("905a0fef-bc53-11df-8c49-001e4fc686da")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IBufferByteAccess
+    {
+        // This needs to be a function - MCG doesn't support properties/events for [ComImport] interface yet
+        IntPtr GetBuffer();
+    }  // interface IBufferByteAccess
+}  // namespace
+
+// IBufferByteAccess.cs

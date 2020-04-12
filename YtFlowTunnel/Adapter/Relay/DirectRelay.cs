@@ -39,9 +39,9 @@ namespace YtFlow.Tunnel.Adapter.Relay
             return remoteAdapter.Init(outboundChan, this);
         }
 
-        public ValueTask<int> StartRecv (byte[] outBuf, int offset, CancellationToken cancellationToken = default)
+        public ValueTask<int> StartRecv (ArraySegment<byte> outBuf, CancellationToken cancellationToken = default)
         {
-            return remoteAdapter.StartRecv(outBuf, offset, cancellationToken);
+            return remoteAdapter.StartRecv(outBuf, cancellationToken);
         }
 
         public Task StartSend (ChannelReader<byte[]> outboundChan, CancellationToken cancellationToken = default)
@@ -49,9 +49,9 @@ namespace YtFlow.Tunnel.Adapter.Relay
             return remoteAdapter.StartSend(outboundChan, cancellationToken);
         }
 
-        public Task StartRecvPacket (CancellationToken cancellationToken = default)
+        public Task StartRecvPacket (ILocalAdapter localAdapter, CancellationToken cancellationToken = default)
         {
-            return remoteAdapter.StartRecvPacket(cancellationToken);
+            return remoteAdapter.StartRecvPacket(localAdapter, cancellationToken);
         }
 
         public void SendPacketToRemote (Memory<byte> data, Destination.Destination destination)
@@ -59,7 +59,7 @@ namespace YtFlow.Tunnel.Adapter.Relay
             remoteAdapter.SendPacketToRemote(data, destination);
         }
 
-        public ValueTask<int> GetRecvBufSizeHint (CancellationToken cancellationToken = default) => remoteAdapter.GetRecvBufSizeHint(cancellationToken);
+        public ValueTask<int> GetRecvBufSizeHint (int preferredSize, CancellationToken cancellationToken = default) => remoteAdapter.GetRecvBufSizeHint(preferredSize, cancellationToken);
 
         public void CheckShutdown ()
         {

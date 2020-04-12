@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using Windows.Networking;
 
 namespace YtFlow.Tunnel.Adapter.Destination
 {
@@ -88,6 +89,11 @@ namespace YtFlow.Tunnel.Adapter.Destination
             data[offset - 2] = (byte)(Port >> 8);
             data[offset - 1] = (byte)(Port & 0xFF);
             return offset;
+        }
+
+        public static explicit operator HostName (Destination destination)
+        {
+            return new HostName(destination.Host.ToString());
         }
 
         public override bool Equals (object obj)

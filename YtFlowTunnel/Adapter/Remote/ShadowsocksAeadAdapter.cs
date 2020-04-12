@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using YtCrypto;
 using YtFlow.Tunnel.Adapter.Destination;
 using YtFlow.Tunnel.Adapter.Factory;
+using YtFlow.Tunnel.Adapter.Local;
 
 namespace YtFlow.Tunnel.Adapter.Remote
 {
@@ -119,7 +120,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
             return true;
         }
 
-        public override async ValueTask<int> GetRecvBufSizeHint (CancellationToken cancellationToken = default)
+        public override async ValueTask<int> GetRecvBufSizeHint (int preferredSize, CancellationToken cancellationToken = default)
         {
             if (!receiveIvTask.IsCompleted)
             {
@@ -133,16 +134,16 @@ namespace YtFlow.Tunnel.Adapter.Remote
             return sizeToRead + TAG_SIZE;
         }
 
-        public override async ValueTask<int> StartRecv (byte[] outBuf, int offset, CancellationToken cancellationToken = default)
+        public override async ValueTask<int> StartRecv (ArraySegment<byte> outBuf, CancellationToken cancellationToken = default)
         {
-            if (!await ReadExact(outBuf, offset, sizeToRead + TAG_SIZE, cancellationToken).ConfigureAwait(false))
+            if (!await ReadExact(outBuf.Array, outBuf.Offset, sizeToRead + TAG_SIZE, cancellationToken).ConfigureAwait(false))
             {
                 return 0;
             }
-            return Decrypt(outBuf.AsSpan(offset, sizeToRead), outBuf.AsSpan(offset + sizeToRead, TAG_SIZE), outBuf.AsSpan(offset), cryptor);
+            return Decrypt(outBuf.AsSpan(0, sizeToRead), outBuf.AsSpan(sizeToRead, TAG_SIZE), outBuf.AsSpan(0, sizeToRead), cryptor);
         }
 
-        public async override Task StartRecvPacket (CancellationToken cancellationToken = default)
+        public async override Task StartRecvPacket (ILocalAdapter localAdapter, CancellationToken cancellationToken = default)
         {
             var outDataBuffer = new byte[sendBufferLen + 66];
             while (!cancellationToken.IsCancellationRequested && udpClient != null)

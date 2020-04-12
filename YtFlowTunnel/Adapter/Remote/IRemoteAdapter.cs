@@ -10,10 +10,10 @@ namespace YtFlow.Tunnel.Adapter.Remote
     {
         bool RemoteDisconnected { get; set; }
         ValueTask Init (ChannelReader<byte[]> channel, ILocalAdapter localAdapter);
-        ValueTask<int> GetRecvBufSizeHint (CancellationToken cancellationToken = default);
-        ValueTask<int> StartRecv (byte[] outBuf, int offset, CancellationToken cancellationToken = default);
         Task StartSend (ChannelReader<byte[]> channel, CancellationToken cancellationToken = default);
-        Task StartRecvPacket (CancellationToken cancellationToken = default);
+        ValueTask<int> GetRecvBufSizeHint (int preferredSize, CancellationToken cancellationToken = default);
+        ValueTask<int> StartRecv (ArraySegment<byte> outBuf, CancellationToken cancellationToken = default);
+        Task StartRecvPacket (ILocalAdapter localAdapter, CancellationToken cancellationToken = default);
         void SendPacketToRemote (Memory<byte> data, Destination.Destination destination);
         void CheckShutdown ();
     }

@@ -168,7 +168,7 @@ namespace YtFlow.Tunnel.Adapter.Local
 
         private async ValueTask<bool> PollOneFromRemote (CancellationToken cancellationToken = default)
         {
-            var size = await remoteAdapter.GetRecvBufSizeHint(cancellationToken).ConfigureAwait(false);
+            var size = await remoteAdapter.GetRecvBufSizeHint(4096, cancellationToken).ConfigureAwait(false);
             if (size == 0)
             {
                 return false;
@@ -178,7 +178,7 @@ namespace YtFlow.Tunnel.Adapter.Local
             {
                 throw new InvalidOperationException("Cannot get buffer segment from memory");
             }
-            size = await remoteAdapter.StartRecv(bufSegment.Array, bufSegment.Offset, cancellationToken).ConfigureAwait(false);
+            size = await remoteAdapter.StartRecv(bufSegment, cancellationToken).ConfigureAwait(false);
             if (size == 0)
             {
                 return false;

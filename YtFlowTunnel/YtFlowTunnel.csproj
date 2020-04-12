@@ -140,6 +140,7 @@
     <Compile Include="Adapter\Relay\DirectRelay.cs" />
     <Compile Include="Adapter\Relay\Socks5Relay.cs" />
     <Compile Include="Adapter\Remote\AeadOperationException.cs" />
+    <Compile Include="Adapter\Remote\DirectAdapter.cs" />
     <Compile Include="Adapter\Remote\IRemoteAdapter.cs" />
     <Compile Include="Adapter\LwipException.cs" />
     <Compile Include="Adapter\Remote\HttpAdapter.cs" />
@@ -159,6 +160,7 @@
     <Compile Include="TunInterface.cs" />
     <Compile Include="DebugVpnContext.cs" />
     <Compile Include="DebugVpnPlugin.cs" />
+    <Compile Include="Utils\IBufferByteAccess.cs" />
     <Compile Include="VpnPluginState.cs" />
     <Compile Include="VpnTask.cs" />
     <EmbeddedResource Include="Properties\YtFlowTunnel.rd.xml" />
@@ -187,6 +189,7 @@
       <Name>YtCrypto</Name>
     </ProjectReference>
   </ItemGroup>
+  <ItemGroup />
   <PropertyGroup Condition=" '$(VisualStudioVersion)' == '' or '$(VisualStudioVersion)' &lt; '14.0' ">
     <VisualStudioVersion>14.0</VisualStudioVersion>
   </PropertyGroup>

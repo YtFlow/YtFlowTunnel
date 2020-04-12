@@ -85,7 +85,7 @@ namespace YtFlow.Tunnel.Adapter.Local
               });
             try
             {
-                await remoteAdapter.StartRecvPacket(recvCancel.Token).ConfigureAwait(false);
+                await remoteAdapter.StartRecvPacket(this, recvCancel.Token).ConfigureAwait(false);
                 if (DebugLogger.LogNeeded())
                 {
                     DebugLogger.Log("Close!: " + Destination);

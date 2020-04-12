@@ -16,14 +16,12 @@ namespace YtFlow.Tunnel.Adapter.Remote
         private static readonly NotSupportedException UdpNotSupportedException = new NotSupportedException("UDP destination is not supported");
         private readonly string server;
         private readonly int port;
-        private const int RECV_BUFFER_LEN = 1024;
         private const int HEAD_BUFFER_LEN = 100;
         private readonly TcpClient client = new TcpClient(AddressFamily.InterNetwork)
         {
             NoDelay = true
         };
         private NetworkStream networkStream;
-        private ILocalAdapter localAdapter;
         public bool RemoteDisconnected { get; set; } = false;
 
         public HttpAdapter (string server, int port)
@@ -38,7 +36,6 @@ namespace YtFlow.Tunnel.Adapter.Remote
             {
                 throw UdpNotSupportedException;
             }
-            this.localAdapter = localAdapter;
             var connectTask = client.ConnectAsync(server, port).ConfigureAwait(false);
             var destination = localAdapter.Destination;
             string portStr = destination.Port.ToString();
@@ -104,20 +101,22 @@ namespace YtFlow.Tunnel.Adapter.Remote
         {
             while (await outboundChan.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                outboundChan.TryRead(out var data);
-                // TODO: batch write
-                await networkStream.WriteAsync(data, 0, data.Length, cancellationToken).ConfigureAwait(false);
-                // await networkStream.FlushAsync();
+                if (outboundChan.TryRead(out var data))
+                {
+                    // TODO: batch write
+                    await networkStream.WriteAsync(data, 0, data.Length, cancellationToken).ConfigureAwait(false);
+                    // await networkStream.FlushAsync();
+                }
             }
             await networkStream.FlushAsync(cancellationToken).ConfigureAwait(false);
             client.Client.Shutdown(SocketShutdown.Send);
         }
 
-        public ValueTask<int> GetRecvBufSizeHint (CancellationToken cancellationToken = default) => new ValueTask<int>(RECV_BUFFER_LEN);
+        public ValueTask<int> GetRecvBufSizeHint (int preferredSize, CancellationToken cancellationToken = default) => new ValueTask<int>(preferredSize);
 
-        public async ValueTask<int> StartRecv (byte[] outBuf, int offset, CancellationToken cancellationToken = default)
+        public async ValueTask<int> StartRecv (ArraySegment<byte> outBuf, CancellationToken cancellationToken = default)
         {
-            var len = await networkStream.ReadAsync(outBuf, offset, RECV_BUFFER_LEN, cancellationToken).ConfigureAwait(false);
+            var len = await networkStream.ReadAsync(outBuf.Array, outBuf.Offset, outBuf.Count, cancellationToken).ConfigureAwait(false);
             if (len == 0)
             {
                 return 0;
@@ -137,10 +136,9 @@ namespace YtFlow.Tunnel.Adapter.Remote
                 client?.Dispose();
             }
             catch (ObjectDisposedException) { }
-            localAdapter = null;
         }
 
-        public Task StartRecvPacket (CancellationToken cancellationToken = default)
+        public Task StartRecvPacket (ILocalAdapter localAdapter, CancellationToken cancellationToken = default)
         {
             return Task.CompletedTask;
         }

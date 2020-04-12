@@ -21,7 +21,6 @@ namespace YtFlow.Tunnel.Adapter.Remote
     /// </summary>
     internal sealed class TrojanAdapter : IRemoteAdapter
     {
-        private const int RECV_BUFFER_LEN = 4096;
         private static readonly ArrayPool<byte> sendArrayPool = ArrayPool<byte>.Create();
         private readonly HostName server;
         private readonly string port;
@@ -30,7 +29,6 @@ namespace YtFlow.Tunnel.Adapter.Remote
         private readonly StreamSocket socket = new StreamSocket();
         private IInputStream inputStream;
         private IOutputStream outputStream;
-        private ILocalAdapter localAdapter;
         public bool RemoteDisconnected { get; set; }
 
         public TrojanAdapter (HostName server, string port, Memory<byte> hashedPassword, bool allowInsecure)
@@ -76,7 +74,6 @@ namespace YtFlow.Tunnel.Adapter.Remote
 
         public async ValueTask Init (ChannelReader<byte[]> outboundChan, ILocalAdapter localAdapter)
         {
-            this.localAdapter = localAdapter;
             if (allowInsecure)
             {
                 socket.Control.IgnorableServerCertificateErrors.Add(ChainValidationResult.Untrusted);
@@ -122,11 +119,11 @@ namespace YtFlow.Tunnel.Adapter.Remote
             }
         }
 
-        public ValueTask<int> GetRecvBufSizeHint (CancellationToken cancellationToken = default) => new ValueTask<int>(RECV_BUFFER_LEN);
+        public ValueTask<int> GetRecvBufSizeHint (int preferredSize, CancellationToken cancellationToken = default) => new ValueTask<int>(preferredSize);
 
-        public async ValueTask<int> StartRecv (byte[] outBuf, int offset, CancellationToken cancellationToken = default)
+        public async ValueTask<int> StartRecv (ArraySegment<byte> outBuf, CancellationToken cancellationToken = default)
         {
-            var recvBuf = await inputStream.ReadAsync(outBuf.AsBuffer(offset, 0, RECV_BUFFER_LEN), RECV_BUFFER_LEN, InputStreamOptions.Partial).AsTask(cancellationToken).ConfigureAwait(false);
+            var recvBuf = await inputStream.ReadAsync(outBuf.Array.AsBuffer(outBuf.Offset, outBuf.Count), (uint)outBuf.Count, InputStreamOptions.Partial).AsTask(cancellationToken).ConfigureAwait(false);
             if (recvBuf.Length == 0)
             {
                 return 0;
@@ -138,12 +135,10 @@ namespace YtFlow.Tunnel.Adapter.Remote
         {
             while (await outboundChan.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                var totalBytes = 0;
                 var packetsToSend = new List<byte[]>();
                 while (outboundChan.TryRead(out var segment))
                 {
                     packetsToSend.Add(segment);
-                    totalBytes += segment.Length;
                 }
                 var pendingTasks = new Task[packetsToSend.Count];
                 for (var index = 0; index < packetsToSend.Count; ++index)
@@ -158,8 +153,9 @@ namespace YtFlow.Tunnel.Adapter.Remote
             socket.Dispose();
         }
 
-        public async Task StartRecvPacket (CancellationToken cancellationToken = default)
+        public async Task StartRecvPacket (ILocalAdapter localAdapter, CancellationToken cancellationToken = default)
         {
+            const int RECV_BUFFER_LEN = 2048;
             byte[] buf = new byte[RECV_BUFFER_LEN];
             var stream = inputStream.AsStreamForRead();
             int offset = 0, unconsumedLen = 0;
@@ -252,7 +248,6 @@ namespace YtFlow.Tunnel.Adapter.Remote
             }
             catch (ObjectDisposedException) { }
             // socket = null;
-            localAdapter = null;
         }
     }
 }

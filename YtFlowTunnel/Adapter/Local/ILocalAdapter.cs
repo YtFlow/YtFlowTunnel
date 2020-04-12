@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Windows.Storage.Streams;
 
 namespace YtFlow.Tunnel.Adapter.Local
 {
