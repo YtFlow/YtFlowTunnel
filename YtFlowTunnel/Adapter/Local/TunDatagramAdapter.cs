@@ -26,10 +26,9 @@ namespace YtFlow.Tunnel.Adapter.Local
         private readonly ushort localPort;
         private readonly byte[] sendBuffer = new byte[1500];
         private readonly Task initTask;
+        private readonly IRemoteAdapter remoteAdapter;
         private int secondsTicked = 0;
         public Destination.Destination Destination { get; set; }
-
-        private IRemoteAdapter remoteAdapter;
 
         private static ChannelReader<byte[]> CreateCompletedChannelReader ()
         {

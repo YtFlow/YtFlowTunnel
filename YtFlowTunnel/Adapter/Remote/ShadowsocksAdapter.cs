@@ -1,10 +1,14 @@
 ﻿using System;
 using System.Buffers;
-using System.Net.Sockets;
-using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices.WindowsRuntime;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
+using Windows.Foundation;
+using Windows.Networking;
+using Windows.Networking.Connectivity;
+using Windows.Networking.Sockets;
+using Windows.Storage.Streams;
 using YtCrypto;
 using YtFlow.Tunnel.Adapter.Destination;
 using YtFlow.Tunnel.Adapter.Factory;
@@ -14,16 +18,17 @@ namespace YtFlow.Tunnel.Adapter.Remote
 {
     internal class ShadowsocksAdapter : IRemoteAdapter
     {
-        private readonly SemaphoreSlim udpSendLock = new SemaphoreSlim(1, 1);
         private readonly static ArrayPool<byte> sendArrayPool = ArrayPool<byte>.Create();
-        private readonly ChannelClosedException noEnoughIvException = new ChannelClosedException("No enough iv received");
+        private readonly static ChannelClosedException noEnoughIvException = new ChannelClosedException("No enough iv received");
+        private readonly SemaphoreSlim udpSendLock = new SemaphoreSlim(1, 1);
         protected virtual int sendBufferLen => 4096;
         protected readonly string server;
         protected readonly int port;
-        protected TcpClient client;
-        protected UdpClient udpClient;
-        protected NetworkStream networkStream;
-        // protected ILocalAdapter localAdapter;
+        protected StreamSocket client;
+        protected DatagramSocket udpClient;
+        protected Action<DatagramSocket, DatagramSocketMessageReceivedEventArgs> udpReceivedHandler = (_s, _e) => { };
+        protected IInputStream tcpInputStream;
+        protected IOutputStream udpOutputStream;
         protected ICryptor cryptor = null;
         protected Task receiveIvTask = Task.CompletedTask;
 
@@ -82,24 +87,27 @@ namespace YtFlow.Tunnel.Adapter.Remote
         public async ValueTask Init (ChannelReader<byte[]> outboundChan, ILocalAdapter localAdapter)
         {
             var destination = localAdapter.Destination;
-            ConfiguredTaskAwaitable connectTask;
+            IAsyncAction connectTask;
+            var dev = NetworkInformation.GetInternetConnectionProfile().NetworkAdapter;
             switch (destination.TransportProtocol)
             {
                 case TransportProtocol.Tcp:
-                    client = new TcpClient(AddressFamily.InterNetwork)
-                    {
-                        NoDelay = true,
-                    };
-                    // No way to pass a cancellationToken in.
-                    // See https://github.com/dotnet/runtime/issues/921
-                    connectTask = client.ConnectAsync(server, port).ConfigureAwait(false);
+                    client = new StreamSocket();
+                    client.Control.NoDelay = true;
+                    connectTask = client.ConnectAsync(new HostName(server), port.ToString(), SocketProtectionLevel.PlainSocket, dev);
+                    tcpInputStream = client.InputStream;
                     break;
                 case TransportProtocol.Udp:
                     cryptor = null;
                     // Shadowsocks does not require a handshake for UDP transport
-                    udpClient = new UdpClient();
-                    udpClient.Client.Connect(server, port);
+                    udpClient = new DatagramSocket();
+                    // MessageReceived must be subscribed at this point
+                    udpClient.MessageReceived += UdpClient_MessageReceived;
+                    await udpClient.BindServiceNameAsync(string.Empty, dev).AsTask().ConfigureAwait(false);
+                    udpOutputStream = await udpClient.GetOutputStreamAsync(new HostName(server), port.ToString());
                     return;
+                default:
+                    throw new NotImplementedException("Unknown transport protocol");
             }
 
             byte[] firstBuf = Array.Empty<byte>();
@@ -128,8 +136,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
 
             try
             {
-                await connectTask;
-                networkStream = client.GetStream();
+                await connectTask.AsTask().ConfigureAwait(false);
             }
             catch (Exception)
             {
@@ -142,30 +149,30 @@ namespace YtFlow.Tunnel.Adapter.Remote
                 // Recv iv first, then GetRecvBufSizeHint will not bother with iv stuff
                 receiveIvTask = ReceiveIv(requestPayload);
                 // TODO: necessary to wait until the first segment being sent?
-                await networkStream.WriteAsync(encryptedFirstSeg, 0, (int)encryptedFirstSegLen).ConfigureAwait(false);
+                await client.OutputStream.WriteAsync(encryptedFirstSeg.AsBuffer(0, (int)encryptedFirstSegLen)).AsTask().ConfigureAwait(false);
             }
             finally
             {
                 sendArrayPool.Return(encryptedFirstSeg, true);
             }
-            client.NoDelay = false;
         }
 
         private async Task ReceiveIv (byte[] buf)
         {
             try
             {
-                int ivLen = (int)cryptor.IvLen, ivReceived = 0;
+                uint ivLen = (uint)cryptor.IvLen, ivReceived = 0;
                 while (ivReceived < ivLen)
                 {
-                    var chunkLen = await networkStream.ReadAsync(buf, ivReceived, ivLen - ivReceived);
-                    if (chunkLen == 0)
+                    var readLen = ivLen - ivReceived;
+                    var chunk = await tcpInputStream.ReadAsync(buf.AsBuffer((int)ivReceived, (int)readLen), readLen, InputStreamOptions.Partial).AsTask().ConfigureAwait(false);
+                    if (chunk.Length == 0)
                     {
                         throw noEnoughIvException;
                     }
-                    ivReceived += chunkLen;
+                    ivReceived += chunk.Length;
                 }
-                Decrypt(buf.AsSpan(0, ivLen), Array.Empty<byte>(), cryptor);
+                Decrypt(buf.AsSpan(0, (int)ivLen), Array.Empty<byte>(), cryptor);
             }
             finally
             {
@@ -181,7 +188,9 @@ namespace YtFlow.Tunnel.Adapter.Remote
             {
                 await receiveIvTask.ConfigureAwait(false);
             }
-            var len = await networkStream.ReadAsync(outBuf.Array, outBuf.Offset, outBuf.Count, cancellationToken).ConfigureAwait(false);
+            var chunk = await tcpInputStream.ReadAsync(outBuf.Array.AsBuffer(outBuf.Offset, outBuf.Count), (uint)outBuf.Count, InputStreamOptions.Partial)
+                .AsTask(cancellationToken).ConfigureAwait(false);
+            var len = (int)chunk.Length;
             if (len == 0)
             {
                 return 0;
@@ -195,6 +204,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
             {
                 return;
             }
+            var stream = client.OutputStream;
             while (await outboundChan.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
             {
                 if (!outboundChan.TryRead(out var data))
@@ -208,10 +218,10 @@ namespace YtFlow.Tunnel.Adapter.Remote
                     var buf = sendArrayPool.Rent(inDataLen + 34); // size(2) + sizeTag(16) + data + dataTag(16)
                     try
                     {
-                        var outDataLen = Encrypt(data.AsSpan().Slice(offset, inDataLen), buf);
+                        var outDataLen = (int)Encrypt(data.AsSpan().Slice(offset, inDataLen), buf);
                         offset += inDataLen;
                         // TODO: batch write
-                        await networkStream.WriteAsync(buf, 0, (int)outDataLen, cancellationToken).ConfigureAwait(false);
+                        await stream.WriteAsync(buf.AsBuffer(0, outDataLen)).AsTask(cancellationToken).ConfigureAwait(false);
                     }
                     finally
                     {
@@ -219,31 +229,53 @@ namespace YtFlow.Tunnel.Adapter.Remote
                     }
                 }
             }
-            await networkStream.FlushAsync(cancellationToken).ConfigureAwait(false);
+            await stream.FlushAsync().AsTask(cancellationToken).ConfigureAwait(false);
             client.Dispose();
         }
 
-        public async virtual Task StartRecvPacket (ILocalAdapter localAdapter, CancellationToken cancellationToken = default)
+        private void UdpClient_MessageReceived (DatagramSocket sender, DatagramSocketMessageReceivedEventArgs args)
+        {
+            udpReceivedHandler(sender, args);
+        }
+
+        public unsafe virtual Task StartRecvPacket (ILocalAdapter localAdapter, CancellationToken cancellationToken = default)
         {
             var outDataBuffer = new byte[sendBufferLen + 66];
-            while (!cancellationToken.IsCancellationRequested && udpClient != null)
+            var tcs = new TaskCompletionSource<object>();
+            void packetHandler (DatagramSocket sender, DatagramSocketMessageReceivedEventArgs e)
             {
-                var result = await udpClient.ReceiveAsync().ConfigureAwait(false);
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    return;
+                }
+                var buffer = e.GetDataReader().DetachBuffer();
+                var ptr = ((IBufferByteAccess)buffer).GetBuffer().ToPointer();
                 var cryptor = ShadowsocksFactory.GlobalCryptorFactory.CreateCryptor();
-                var decDataLen = Decrypt(result.Buffer, outDataBuffer, cryptor);
+                var decDataLen = Decrypt(new ReadOnlySpan<byte>(ptr, (int)buffer.Length), outDataBuffer, cryptor);
                 // TODO: support IPv6/domain name address type
                 if (decDataLen < 7 || outDataBuffer[0] != 1)
                 {
-                    continue;
+                    return;
                 }
 
                 var headerLen = Destination.Destination.TryParseSocks5StyleAddress(outDataBuffer.AsSpan(0, (int)decDataLen), out _, TransportProtocol.Udp);
                 if (headerLen <= 0)
                 {
-                    continue;
+                    return;
                 }
-                await localAdapter.WritePacketToLocal(outDataBuffer.AsSpan(headerLen, (int)decDataLen - headerLen), cancellationToken).ConfigureAwait(false);
+                localAdapter.WritePacketToLocal(outDataBuffer.AsSpan(headerLen, (int)decDataLen - headerLen), cancellationToken).ConfigureAwait(false);
             }
+            udpReceivedHandler = packetHandler;
+            cancellationToken.Register(() =>
+            {
+                tcs.TrySetCanceled();
+                var socket = udpClient;
+                if (socket != null)
+                {
+                    socket.MessageReceived -= packetHandler;
+                }
+            });
+            return tcs.Task;
         }
 
         public async void SendPacketToRemote (Memory<byte> data, Destination.Destination destination)
@@ -270,7 +302,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
                 var cryptor = ShadowsocksFactory.GlobalCryptorFactory.CreateCryptor();
                 var ivLen = Encrypt(Array.Empty<byte>(), udpSendEncBuffer, cryptor); // Fill IV/Salt first
                 var len = EncryptAll(udpSendBuffer.AsSpan(0, headerLen + data.Length), udpSendEncBuffer.AsSpan((int)ivLen), cryptor);
-                _ = udpClient.SendAsync(udpSendEncBuffer, (int)(len + ivLen), server, port).ConfigureAwait(false);
+                _ = udpOutputStream.WriteAsync(udpSendEncBuffer.AsBuffer(0, (int)(len + ivLen)));
             }
             finally
             {
@@ -291,13 +323,15 @@ namespace YtFlow.Tunnel.Adapter.Remote
             // outboundChan = null;
             try
             {
-                networkStream?.Dispose();
+                tcpInputStream?.Dispose();
+                udpOutputStream?.Dispose();
             }
             catch (ObjectDisposedException) { }
             // networkStream = null;
             try
             {
                 client?.Dispose();
+                udpClient?.Dispose();
             }
             catch (ObjectDisposedException) { }
             try

@@ -17,6 +17,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
     {
         private StreamSocket streamSocket;
         private DatagramSocket datagramSocket;
+        protected Action<DatagramSocket, DatagramSocketMessageReceivedEventArgs> udpReceivedHandler = (_s, _e) => { };
 
         public bool RemoteDisconnected { get; set; }
 
@@ -32,10 +33,16 @@ namespace YtFlow.Tunnel.Adapter.Remote
                     break;
                 case Destination.TransportProtocol.Udp:
                     datagramSocket = new DatagramSocket();
+                    datagramSocket.MessageReceived += DatagramSocket_MessageReceived;
                     await datagramSocket.BindServiceNameAsync(string.Empty, dev);
                     await datagramSocket.ConnectAsync((HostName)localAdapter.Destination, port.ToString());
                     break;
             }
+        }
+
+        private void DatagramSocket_MessageReceived (DatagramSocket sender, DatagramSocketMessageReceivedEventArgs args)
+        {
+            udpReceivedHandler(sender, args);
         }
 
         public ValueTask<int> GetRecvBufSizeHint (int preferredSize, CancellationToken cancellationToken = default) => new ValueTask<int>(preferredSize);
@@ -86,7 +93,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
                 var ptr = ((IBufferByteAccess)buffer).GetBuffer();
                 localAdapter.WritePacketToLocal(new Span<byte>(ptr.ToPointer(), (int)buffer.Length), cancellationToken);
             }
-            datagramSocket.MessageReceived += packetHandler;
+            udpReceivedHandler = packetHandler;
             cancellationToken.Register(() =>
             {
                 tcs.TrySetCanceled();

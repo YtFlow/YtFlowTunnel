@@ -1,7 +1,10 @@
 ﻿using System;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices.WindowsRuntime;
 using System.Threading;
 using System.Threading.Tasks;
+using Windows.Networking.Sockets;
+using Windows.Storage.Streams;
 using YtCrypto;
 using YtFlow.Tunnel.Adapter.Destination;
 using YtFlow.Tunnel.Adapter.Factory;
@@ -15,7 +18,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
         private const int SIZE_MASK = 0x3fff;
         private const int READ_SIZE_SIZE = TAG_SIZE + 2;
         protected override int sendBufferLen => SIZE_MASK;
-        private byte[] sizeBuf = new byte[READ_SIZE_SIZE];
+        private readonly byte[] sizeBuf = new byte[READ_SIZE_SIZE];
         private int sizeToRead = 0;
 
         public ShadowsocksAeadAdapter (string server, int port, ICryptor cryptor) : base(server, port, cryptor)
@@ -110,7 +113,10 @@ namespace YtFlow.Tunnel.Adapter.Remote
             }
             do
             {
-                var chunkLen = await networkStream.ReadAsync(buffer, offset, targetOffset - offset, cancellationToken).ConfigureAwait(false);
+                var readLen = targetOffset - offset;
+                var chunk = await tcpInputStream.ReadAsync(buffer.AsBuffer(offset, readLen), (uint)readLen, InputStreamOptions.Partial)
+                    .AsTask(cancellationToken).ConfigureAwait(false);
+                var chunkLen = (int)chunk.Length;
                 if (chunkLen == 0)
                 {
                     return false;
@@ -143,24 +149,28 @@ namespace YtFlow.Tunnel.Adapter.Remote
             return Decrypt(outBuf.AsSpan(0, sizeToRead), outBuf.AsSpan(sizeToRead, TAG_SIZE), outBuf.AsSpan(0, sizeToRead), cryptor);
         }
 
-        public async override Task StartRecvPacket (ILocalAdapter localAdapter, CancellationToken cancellationToken = default)
+        public unsafe override Task StartRecvPacket (ILocalAdapter localAdapter, CancellationToken cancellationToken = default)
         {
             var outDataBuffer = new byte[sendBufferLen + 66];
-            while (!cancellationToken.IsCancellationRequested && udpClient != null)
+            var tcs = new TaskCompletionSource<object>();
+            void packetHandler (DatagramSocket sender, DatagramSocketMessageReceivedEventArgs e)
             {
-                var result = await udpClient.ReceiveAsync().ConfigureAwait(false);
                 var cryptor = ShadowsocksFactory.GlobalCryptorFactory.CreateCryptor();
-                var buffer = result.Buffer;
+                var buffer = e.GetDataReader().DetachBuffer();
+                var ptr = ((IBufferByteAccess)buffer).GetBuffer();
                 var ivLen = (int)cryptor.IvLen;
                 if (buffer.Length < ivLen + TAG_SIZE + 7)
                 {
-                    continue;
+                    return;
                 }
 
                 int decDataLen;
                 try
                 {
-                    decDataLen = Decrypt(buffer.AsSpan(0, buffer.Length - TAG_SIZE), buffer.AsSpan(buffer.Length - TAG_SIZE, TAG_SIZE), outDataBuffer, cryptor);
+                    decDataLen = Decrypt(
+                        new ReadOnlySpan<byte>(ptr.ToPointer(), (int)(buffer.Length - TAG_SIZE)),
+                        new ReadOnlySpan<byte>((void*)(ptr.ToInt64() + buffer.Length - TAG_SIZE), TAG_SIZE),
+                        outDataBuffer, cryptor);
                 }
                 catch (AeadOperationException ex)
                 {
@@ -168,21 +178,32 @@ namespace YtFlow.Tunnel.Adapter.Remote
                     {
                         DebugLogger.Log($"Error decrypting a UDP packet from {localAdapter.Destination}: {ex}");
                     }
-                    continue;
+                    return;
                 }
                 // TODO: support IPv6/domain name address type
                 if (decDataLen < 7 || outDataBuffer[0] != 1)
                 {
-                    continue;
+                    return;
                 }
 
                 var headerLen = Destination.Destination.TryParseSocks5StyleAddress(outDataBuffer.AsSpan(0, decDataLen), out _, TransportProtocol.Udp);
                 if (headerLen <= 0)
                 {
-                    continue;
+                    return;
                 }
-                await localAdapter.WritePacketToLocal(outDataBuffer.AsSpan(headerLen, decDataLen - headerLen), cancellationToken).ConfigureAwait(false);
+                localAdapter.WritePacketToLocal(outDataBuffer.AsSpan(headerLen, decDataLen - headerLen), cancellationToken).ConfigureAwait(false);
             }
+            udpReceivedHandler = packetHandler;
+            cancellationToken.Register(() =>
+            {
+                tcs.TrySetCanceled();
+                var socket = udpClient;
+                if (socket != null)
+                {
+                    socket.MessageReceived -= packetHandler;
+                }
+            });
+            return tcs.Task;
         }
 
     }
