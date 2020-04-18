@@ -155,43 +155,54 @@ namespace YtFlow.Tunnel.Adapter.Remote
             var tcs = new TaskCompletionSource<object>();
             void packetHandler (DatagramSocket sender, DatagramSocketMessageReceivedEventArgs e)
             {
-                var cryptor = ShadowsocksFactory.GlobalCryptorFactory.CreateCryptor();
-                var buffer = e.GetDataReader().DetachBuffer();
-                var ptr = ((IBufferByteAccess)buffer).GetBuffer();
-                var ivLen = (int)cryptor.IvLen;
-                if (buffer.Length < ivLen + TAG_SIZE + 7)
+                if (cancellationToken.IsCancellationRequested)
                 {
                     return;
                 }
-
-                int decDataLen;
                 try
                 {
-                    decDataLen = Decrypt(
-                        new ReadOnlySpan<byte>(ptr.ToPointer(), (int)(buffer.Length - TAG_SIZE)),
-                        new ReadOnlySpan<byte>((void*)(ptr.ToInt64() + buffer.Length - TAG_SIZE), TAG_SIZE),
-                        outDataBuffer, cryptor);
-                }
-                catch (AeadOperationException ex)
-                {
-                    if (DebugLogger.LogNeeded())
+                    var cryptor = ShadowsocksFactory.GlobalCryptorFactory.CreateCryptor();
+                    var buffer = e.GetDataReader().DetachBuffer();
+                    var ptr = ((IBufferByteAccess)buffer).GetBuffer();
+                    var ivLen = (int)cryptor.IvLen;
+                    if (buffer.Length < ivLen + TAG_SIZE + 7)
                     {
-                        DebugLogger.Log($"Error decrypting a UDP packet from {localAdapter.Destination}: {ex}");
+                        return;
                     }
-                    return;
-                }
-                // TODO: support IPv6/domain name address type
-                if (decDataLen < 7 || outDataBuffer[0] != 1)
-                {
-                    return;
-                }
 
-                var headerLen = Destination.Destination.TryParseSocks5StyleAddress(outDataBuffer.AsSpan(0, decDataLen), out _, TransportProtocol.Udp);
-                if (headerLen <= 0)
-                {
-                    return;
+                    int decDataLen;
+                    try
+                    {
+                        decDataLen = Decrypt(
+                            new ReadOnlySpan<byte>(ptr.ToPointer(), (int)(buffer.Length - TAG_SIZE)),
+                            new ReadOnlySpan<byte>((void*)(ptr.ToInt64() + buffer.Length - TAG_SIZE), TAG_SIZE),
+                            outDataBuffer, cryptor);
+                    }
+                    catch (AeadOperationException ex)
+                    {
+                        if (DebugLogger.LogNeeded())
+                        {
+                            DebugLogger.Log($"Error decrypting a UDP packet from {localAdapter.Destination}: {ex}");
+                        }
+                        throw;
+                    }
+                    // TODO: support IPv6/domain name address type
+                    if (decDataLen < 7 || outDataBuffer[0] != 1)
+                    {
+                        return;
+                    }
+
+                    var headerLen = Destination.Destination.TryParseSocks5StyleAddress(outDataBuffer.AsSpan(0, decDataLen), out _, TransportProtocol.Udp);
+                    if (headerLen <= 0)
+                    {
+                        return;
+                    }
+                    localAdapter.WritePacketToLocal(outDataBuffer.AsSpan(headerLen, decDataLen - headerLen), cancellationToken).ConfigureAwait(false);
                 }
-                localAdapter.WritePacketToLocal(outDataBuffer.AsSpan(headerLen, decDataLen - headerLen), cancellationToken).ConfigureAwait(false);
+                catch (Exception ex)
+                {
+                    tcs.TrySetException(ex);
+                }
             }
             udpReceivedHandler = packetHandler;
             cancellationToken.Register(() =>

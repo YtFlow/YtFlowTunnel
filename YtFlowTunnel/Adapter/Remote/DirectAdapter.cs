@@ -89,9 +89,16 @@ namespace YtFlow.Tunnel.Adapter.Remote
                 {
                     return;
                 }
-                var buffer = e.GetDataReader().DetachBuffer();
-                var ptr = ((IBufferByteAccess)buffer).GetBuffer();
-                localAdapter.WritePacketToLocal(new Span<byte>(ptr.ToPointer(), (int)buffer.Length), cancellationToken);
+                try
+                {
+                    var buffer = e.GetDataReader().DetachBuffer();
+                    var ptr = ((IBufferByteAccess)buffer).GetBuffer();
+                    localAdapter.WritePacketToLocal(new Span<byte>(ptr.ToPointer(), (int)buffer.Length), cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    tcs.TrySetException(ex);
+                }
             }
             udpReceivedHandler = packetHandler;
             cancellationToken.Register(() =>

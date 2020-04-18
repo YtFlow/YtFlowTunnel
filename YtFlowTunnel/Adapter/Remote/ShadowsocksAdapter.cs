@@ -242,28 +242,35 @@ namespace YtFlow.Tunnel.Adapter.Remote
         {
             var outDataBuffer = new byte[sendBufferLen + 66];
             var tcs = new TaskCompletionSource<object>();
-            void packetHandler (DatagramSocket sender, DatagramSocketMessageReceivedEventArgs e)
+            async void packetHandler (DatagramSocket sender, DatagramSocketMessageReceivedEventArgs e)
             {
                 if (cancellationToken.IsCancellationRequested)
                 {
                     return;
                 }
-                var buffer = e.GetDataReader().DetachBuffer();
-                var ptr = ((IBufferByteAccess)buffer).GetBuffer().ToPointer();
-                var cryptor = ShadowsocksFactory.GlobalCryptorFactory.CreateCryptor();
-                var decDataLen = Decrypt(new ReadOnlySpan<byte>(ptr, (int)buffer.Length), outDataBuffer, cryptor);
-                // TODO: support IPv6/domain name address type
-                if (decDataLen < 7 || outDataBuffer[0] != 1)
+                try
                 {
-                    return;
-                }
+                    var buffer = e.GetDataReader().DetachBuffer();
+                    var ptr = ((IBufferByteAccess)buffer).GetBuffer().ToPointer();
+                    var cryptor = ShadowsocksFactory.GlobalCryptorFactory.CreateCryptor();
+                    var decDataLen = Decrypt(new ReadOnlySpan<byte>(ptr, (int)buffer.Length), outDataBuffer, cryptor);
+                    // TODO: support IPv6/domain name address type
+                    if (decDataLen < 7 || outDataBuffer[0] != 1)
+                    {
+                        return;
+                    }
 
-                var headerLen = Destination.Destination.TryParseSocks5StyleAddress(outDataBuffer.AsSpan(0, (int)decDataLen), out _, TransportProtocol.Udp);
-                if (headerLen <= 0)
-                {
-                    return;
+                    var headerLen = Destination.Destination.TryParseSocks5StyleAddress(outDataBuffer.AsSpan(0, (int)decDataLen), out _, TransportProtocol.Udp);
+                    if (headerLen <= 0)
+                    {
+                        return;
+                    }
+                    localAdapter.WritePacketToLocal(outDataBuffer.AsSpan(headerLen, (int)decDataLen - headerLen), cancellationToken).ConfigureAwait(false);
                 }
-                localAdapter.WritePacketToLocal(outDataBuffer.AsSpan(headerLen, (int)decDataLen - headerLen), cancellationToken).ConfigureAwait(false);
+                catch (Exception ex)
+                {
+                    tcs.TrySetException(ex);
+                }
             }
             udpReceivedHandler = packetHandler;
             cancellationToken.Register(() =>
