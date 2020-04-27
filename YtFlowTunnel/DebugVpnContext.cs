@@ -2,6 +2,9 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices.WindowsRuntime;
+using System.Threading;
+using System.Threading.Channels;
+using System.Threading.Tasks;
 using Windows.Networking;
 using Windows.Networking.Sockets;
 
@@ -10,10 +13,10 @@ namespace YtFlow.Tunnel
     internal class DebugVpnContext
     {
         // private DatagramSocket s;
-        private UdpClient u;
-        private TunInterface tun;
+        internal UdpClient u;
+        internal TunInterface tun;
         private int tunEndpoint;
-        private IPEndPoint pluginEndpoint = new IPEndPoint(new IPAddress(new byte[] { 127, 0, 0, 1 }), 9007);
+        internal IPEndPoint pluginEndpoint = new IPEndPoint(new IPAddress(new byte[] { 127, 0, 0, 1 }), 9007);
 
         public DebugVpnContext ()
         {
@@ -36,6 +39,7 @@ namespace YtFlow.Tunnel
             tun?.Init();
             StartRecv();
 #endif
+            outPackets = Channel.CreateUnbounded<byte[]>();
             return tunEndpoint;
         }
         private async void StartRecv ()
@@ -61,19 +65,27 @@ namespace YtFlow.Tunnel
             tun?.Deinit();
             u?.Dispose();
             u = null;
+            _ = outPackets.Writer.TryComplete();
         }
 
+        internal Channel<byte[]> outPackets;
         private void Tun_PacketPoped (object sender, byte[] e)
         {
+            // await packetPopLock.WaitAsync().ConfigureAwait(false);
             try
             {
                 // await s?.OutputStream.WriteAsync(e.AsBuffer());
+                // await (u?.SendAsync(e, e.Length, pluginEndpoint) ?? Task.CompletedTask).ConfigureAwait(false);
+                _ = outPackets.Writer.TryWrite(e);
             }
             catch (Exception ex)
             {
                 DebugLogger.Log("Error popping a packet: " + ex.ToString());
             }
-            u?.SendAsync(e, e.Length, pluginEndpoint);
+            finally
+            {
+                // packetPopLock.Release();
+            }
         }
 
         private void S_MessageReceived (DatagramSocket sender, DatagramSocketMessageReceivedEventArgs args)

@@ -107,7 +107,7 @@ namespace YtFlow.Tunnel.Adapter.Local
                     var len = Math.Min(localStackAvailableByteCount, remainingChunk.Length);
                     var chunk = remainingChunk.Slice(0, len);
                     remainingChunk = remainingChunk.Slice(len);
-                    var more = remainingChunk.Length != 0 || !start.Equals(buffer.End);
+                    var more = true;// remainingChunk.Length != 0 || !start.Equals(buffer.End);
                     using (var dataHandle = chunk.Pin())
                     {
                         writeResult = await SendToSocket(dataHandle, (ushort)chunk.Length, more).ConfigureAwait(false);
@@ -134,7 +134,7 @@ namespace YtFlow.Tunnel.Adapter.Local
                 }
             }
             inboundReader.AdvanceTo(buffer.End);
-            await _tun.executeLwipTask(() => _socket.Output());
+            //await _tun.executeLwipTask(() => _socket.Output());
 
             if (readResult.IsCanceled || readResult.IsCompleted || writeResult != 0 || pushCancelSource.IsCancellationRequested)
             {

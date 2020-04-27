@@ -178,7 +178,7 @@ namespace YtFlow.Tunnel
             PacketPoped?.Invoke(sender, e);
         }
 
-        public async void PushPacket ([ReadOnlyArray] byte[] packet)
+        public void PushPacket ([ReadOnlyArray] byte[] packet)
         {
             // Packets must contain valid IPv4 headers
             if (packet.Length < 20 || packet[0] >> 4 != 4)
@@ -201,7 +201,7 @@ namespace YtFlow.Tunnel
             }
             if (proto == 6)
             {
-                byte ret = await executeLwipTask(() => wintun.PushPacket(packet)).ConfigureAwait(false);
+                _ = executeLwipTask(() => wintun.PushPacket(packet));
             }
             else
             {

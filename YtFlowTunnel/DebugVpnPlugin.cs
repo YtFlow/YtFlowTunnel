@@ -24,6 +24,7 @@ namespace YtFlow.Tunnel
                 channel.AssociateTransport(transport, null);
 
                 DebugVpnContext context = VpnTask.GetContext();
+                channel.PlugInContext = context;
                 DebugLogger.Log("Initializing context");
 #if !YT_MOCK
                 var configPath = AdapterConfig.GetDefaultConfigFilePath();
@@ -124,6 +125,7 @@ namespace YtFlow.Tunnel
                 transport
                 );
                 var delta = DateTime.Now - now;
+                _ = context.u.SendAsync(new byte[] { 0 }, 1, context.pluginEndpoint);
                 DebugLogger.Log($"Transport started in {delta.TotalMilliseconds} ms.");
                 State = VpnPluginState.Connected;
             }
@@ -169,17 +171,21 @@ namespace YtFlow.Tunnel
         {
             try
             {
-                uint packetCount;
-                while ((packetCount = packets.Size) > 0)
+                uint packetCount = packets.Size;
+                var context = channel.PlugInContext as DebugVpnContext;
+                var tun = context?.tun;
+                if (tun == null)
                 {
-                    while (packetCount-- > 0)
-                    {
+                    return;
+                }
+                while (packetCount-- > 0)
+                {
 #if YTLOG_VERBOSE
-                        LogLine("Encapsulating " + packets.Size.ToString(), channel);
+                    LogLine("Encapsulating " + packets.Size.ToString(), channel);
 #endif
-                        var packet = packets.RemoveAtBegin();
-                        encapulatedPackets.Append(packet);
-                    }
+                    var packet = packets.RemoveAtBegin();
+                    tun.PushPacket(packet.Buffer.ToArray());
+                    packets.Append(packet);
                 }
             }
             catch (Exception ex)
@@ -188,28 +194,28 @@ namespace YtFlow.Tunnel
             }
         }
 
+        private static byte[] DUMMY_DATA = new byte[] { 0 };
         public void Decapsulate (VpnChannel channel, VpnPacketBuffer encapPacketBuffer, VpnPacketBufferList decapsulatedPackets, VpnPacketBufferList controlPacketsToSend)
         {
             try
             {
-                var vpnPacketBuffer = channel.GetVpnReceivePacketBuffer();
-                // Avoid duplicated calls to buffer accessors
-                var vpnBuffer = vpnPacketBuffer.Buffer;
-                var encapBuf = encapPacketBuffer.Buffer;
-#if YTLOG_VERBOSE
-                LogLine("Decapsulating one packet", channel);
-#endif
-                if (encapBuf.Length > vpnBuffer.Capacity)
+                var context = (DebugVpnContext)channel.PlugInContext;
+                var udpClient = context?.u;
+                var reader = context?.outPackets?.Reader;
+                var waitResult = reader?.WaitToReadAsync().AsTask().Result;
+                if (waitResult != true)
                 {
-                    //Drop larger packets.
-                    DebugLogger.Log("Dropped an oversized packet");
                     return;
                 }
-
-                encapBuf.CopyTo(vpnBuffer);
-                vpnBuffer.Length = encapBuf.Length;
-                decapsulatedPackets.Append(vpnPacketBuffer);
-                // LogLine("Decapsulated one packet", channel);
+                while (reader.TryRead(out var bytes))
+                {
+                    var encapBuffer = channel.GetVpnReceivePacketBuffer();
+                    var encapBuf = encapBuffer.Buffer;
+                    bytes.CopyTo(encapBuf);
+                    encapBuf.Length = (uint)bytes.Length;
+                    decapsulatedPackets.Append(encapBuffer);
+                }
+                _ = udpClient.SendAsync(DUMMY_DATA, DUMMY_DATA.Length, context.pluginEndpoint);
             }
             catch (Exception ex)
             {
