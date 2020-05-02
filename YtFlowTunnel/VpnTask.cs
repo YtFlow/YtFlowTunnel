@@ -1,6 +1,5 @@
 ﻿using System;
 using Windows.ApplicationModel.Background;
-using Windows.ApplicationModel.Core;
 using Windows.Networking.Vpn;
 
 namespace YtFlow.Tunnel
