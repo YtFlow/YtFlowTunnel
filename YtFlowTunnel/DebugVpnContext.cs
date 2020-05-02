@@ -37,7 +37,7 @@ namespace YtFlow.Tunnel
             // s.BindEndpointAsync(new HostName("127.0.0.1"), port).AsTask().Wait();
             // s.ConnectAsync(new HostName("127.0.0.1"), "9007").AsTask().Wait();
             tun?.Init();
-            StartRecv();
+            // StartRecv();
 #endif
             outPackets = Channel.CreateUnbounded<byte[]>();
             return tunEndpoint;

@@ -7,24 +7,7 @@ namespace YtFlow.Tunnel
 {
     public sealed class VpnTask : IBackgroundTask
     {
-        internal static T GetSharedObject<T> (string key) where T : new()
-        {
-            var properties = CoreApplication.Properties;
-            if (!properties.TryGetValue(key, out var obj))
-            {
-                obj = new T();
-                properties[key] = obj;
-            }
-            return (T)obj;
-        }
-        internal static void ClearSharedObject (string key)
-        {
-            CoreApplication.Properties.Remove(key);
-        }
-        internal static DebugVpnPlugin GetPlugin () => GetSharedObject<DebugVpnPlugin>("plugin");
-        internal static DebugVpnContext GetContext () => GetSharedObject<DebugVpnContext>("context");
-        internal static void ClearPlugin () => ClearSharedObject("plugin");
-        internal static void ClearContext () => ClearSharedObject("context");
+        internal static DebugVpnPlugin Plugin = new DebugVpnPlugin();
         public void Run (IBackgroundTaskInstance taskInstance)
         {
             var initDebugSocketNeeded = DebugLogger.InitNeeded();
@@ -36,8 +19,7 @@ namespace YtFlow.Tunnel
                 }
                 catch (Exception) { }
             }
-            var plugin = GetPlugin();
-            VpnChannel.ProcessEventAsync(plugin, taskInstance.TriggerDetails);
+            VpnChannel.ProcessEventAsync(Plugin, taskInstance.TriggerDetails);
             DebugLogger.Log("VPN Background task finished");
         }
     }

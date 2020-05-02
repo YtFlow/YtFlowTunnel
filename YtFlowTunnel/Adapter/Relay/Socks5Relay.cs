@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using YtFlow.Tunnel.Adapter.Destination;
@@ -102,7 +103,7 @@ namespace YtFlow.Tunnel.Adapter.Relay
             return len;
         }
 
-        public async override ValueTask Init (ChannelReader<byte[]> outboundChan, ILocalAdapter localAdapter)
+        public async override ValueTask Init (ChannelReader<byte[]> outboundChan, ILocalAdapter localAdapter, CancellationToken cancellationToken = default)
         {
             this.localAdapter = localAdapter;
 
@@ -121,7 +122,7 @@ namespace YtFlow.Tunnel.Adapter.Relay
             }
             await WritePacketToLocal(DummyResponsePayload);
 
-            await base.Init(outboundChan, localAdapter).ConfigureAwait(false);
+            await base.Init(outboundChan, localAdapter, cancellationToken).ConfigureAwait(false);
         }
     }
 }

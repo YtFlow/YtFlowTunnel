@@ -21,7 +21,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
 
         public bool RemoteDisconnected { get; set; }
 
-        public async ValueTask Init (ChannelReader<byte[]> channel, ILocalAdapter localAdapter)
+        public async ValueTask Init (ChannelReader<byte[]> channel, ILocalAdapter localAdapter, CancellationToken cancellationToken = default)
         {
             var dev = NetworkInformation.GetInternetConnectionProfile().NetworkAdapter;
             var port = localAdapter.Destination.Port;
@@ -29,13 +29,13 @@ namespace YtFlow.Tunnel.Adapter.Remote
             {
                 case Destination.TransportProtocol.Tcp:
                     streamSocket = new StreamSocket();
-                    await streamSocket.ConnectAsync((HostName)localAdapter.Destination, port.ToString(), SocketProtectionLevel.PlainSocket, dev);
+                    await streamSocket.ConnectAsync((HostName)localAdapter.Destination, port.ToString(), SocketProtectionLevel.PlainSocket, dev).AsTask(cancellationToken).ConfigureAwait(false);
                     break;
                 case Destination.TransportProtocol.Udp:
                     datagramSocket = new DatagramSocket();
                     datagramSocket.MessageReceived += DatagramSocket_MessageReceived;
-                    await datagramSocket.BindServiceNameAsync(string.Empty, dev);
-                    await datagramSocket.ConnectAsync((HostName)localAdapter.Destination, port.ToString());
+                    await datagramSocket.BindServiceNameAsync(string.Empty, dev).AsTask(cancellationToken).ConfigureAwait(false);
+                    await datagramSocket.ConnectAsync((HostName)localAdapter.Destination, port.ToString()).AsTask(cancellationToken).ConfigureAwait(false);
                     break;
             }
         }

@@ -30,7 +30,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
             this.port = port;
         }
 
-        public async ValueTask Init (ChannelReader<byte[]> outboundChan, ILocalAdapter localAdapter)
+        public async ValueTask Init (ChannelReader<byte[]> outboundChan, ILocalAdapter localAdapter, CancellationToken cancellationToken = default)
         {
             if (localAdapter.Destination.TransportProtocol == TransportProtocol.Udp)
             {
@@ -53,9 +53,9 @@ namespace YtFlow.Tunnel.Adapter.Remote
             // Connect and perform handshake
             await connectTask;
             networkStream = client.GetStream();
-            await networkStream.WriteAsync(firstSeg, 0, headerLen).ConfigureAwait(false);
+            await networkStream.WriteAsync(firstSeg, 0, headerLen, cancellationToken).ConfigureAwait(false);
             byte[] responseBuf = new byte[HEAD_BUFFER_LEN];
-            var responseLen = await networkStream.ReadAsync(responseBuf, 0, HEAD_BUFFER_LEN);
+            var responseLen = await networkStream.ReadAsync(responseBuf, 0, HEAD_BUFFER_LEN, cancellationToken);
             if (responseLen < 14)
             {
                 throw new InvalidOperationException("Remote response too short");

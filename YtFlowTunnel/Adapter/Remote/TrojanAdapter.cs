@@ -72,7 +72,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
             return len;
         }
 
-        public async ValueTask Init (ChannelReader<byte[]> outboundChan, ILocalAdapter localAdapter)
+        public async ValueTask Init (ChannelReader<byte[]> outboundChan, ILocalAdapter localAdapter, CancellationToken cancellationToken = default)
         {
             if (allowInsecure)
             {
@@ -83,7 +83,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
                 socket.Control.IgnorableServerCertificateErrors.Add(ChainValidationResult.InvalidName);
             }
             var dev = NetworkInformation.GetInternetConnectionProfile().NetworkAdapter;
-            var connectTask = socket.ConnectAsync(server, port, SocketProtectionLevel.Tls12, dev).AsTask().ConfigureAwait(false);
+            var connectTask = socket.ConnectAsync(server, port, SocketProtectionLevel.Tls12, dev).AsTask(cancellationToken).ConfigureAwait(false);
             // TODO: custom certificate, server name
 
             var destination = localAdapter.Destination;
@@ -111,7 +111,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
                 await connectTask;
                 inputStream = socket.InputStream;
                 outputStream = socket.OutputStream;
-                await outputStream.WriteAsync(requestPayload.AsBuffer(0, firstBuf.Length + headerLen));
+                _ = outputStream.WriteAsync(requestPayload.AsBuffer(0, firstBuf.Length + headerLen)).AsTask(cancellationToken);
             }
             finally
             {

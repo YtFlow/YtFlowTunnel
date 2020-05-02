@@ -33,10 +33,10 @@ namespace YtFlow.Tunnel.Adapter.Relay
         #region RemoteAdapter
         public bool RemoteDisconnected { get => remoteAdapter.RemoteDisconnected; set => remoteAdapter.RemoteDisconnected = value; }
 
-        public virtual ValueTask Init (ChannelReader<byte[]> outboundChan, ILocalAdapter localAdapter)
+        public virtual ValueTask Init (ChannelReader<byte[]> outboundChan, ILocalAdapter localAdapter, CancellationToken cancellationToken = default)
         {
             this.localAdapter = localAdapter;
-            return remoteAdapter.Init(outboundChan, this);
+            return remoteAdapter.Init(outboundChan, this, cancellationToken);
         }
 
         public ValueTask<int> StartRecv (ArraySegment<byte> outBuf, CancellationToken cancellationToken = default)

@@ -56,15 +56,15 @@ namespace YtFlow.Tunnel.Adapter.Local
             var host = DnsProxyServer.TryLookup(socket.RemoteAddr);
             Destination = new Destination.Destination(host, socket.RemotePort, TransportProtocol.Tcp);
 
-            StartPush();
             this.remoteAdapter = remoteAdapter;
+            StartPush();
             Init();
         }
         private async void Init ()
         {
             try
             {
-                await remoteAdapter.Init(outboundChan.Reader, this);
+                await remoteAdapter.Init(outboundChan.Reader, this, recvCancel.Token);
             }
             catch (Exception ex)
             {
@@ -192,11 +192,11 @@ namespace YtFlow.Tunnel.Adapter.Local
         {
             try
             {
-                while (await PollOneFromRemote(recvCancel.Token).ConfigureAwait(false)) { }
-                if (recvCancel.IsCancellationRequested)
+                try
                 {
-                    return;
+                    while (await PollOneFromRemote(recvCancel.Token).ConfigureAwait(false)) { }
                 }
+                catch (OperationCanceledException) { }
                 await FinishInbound().ConfigureAwait(false);
                 if (DebugLogger.LogNeeded())
                 {
@@ -207,11 +207,8 @@ namespace YtFlow.Tunnel.Adapter.Local
             catch (Exception ex)
             {
                 inboundWriter.Complete(ex);
-                if (!(ex is OperationCanceledException))
-                {
-                    DebugLogger.Log($"Recv error: {Destination}: {ex}");
-                    throw;
-                }
+                DebugLogger.Log($"Recv error: {Destination}: {ex}");
+                throw;
             }
             finally
             {
@@ -228,11 +225,9 @@ namespace YtFlow.Tunnel.Adapter.Local
             }
             catch (OperationCanceledException)
             {
-                recvCancel.Cancel();
             }
             catch (Exception ex)
             {
-                recvCancel.Cancel();
                 // Write a log if the exception is not lwIP Reset
                 if (!(ex is LwipException lwipEx) || lwipEx.LwipCode != -14)
                 {
@@ -243,6 +238,7 @@ namespace YtFlow.Tunnel.Adapter.Local
             finally
             {
                 Interlocked.Decrement(ref SendingCount);
+                recvCancel.Cancel();
             }
         }
 
@@ -272,7 +268,7 @@ namespace YtFlow.Tunnel.Adapter.Local
             remoteAdapter.RemoteDisconnected = true;
             CheckShutdown();
         }
-        
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public async ValueTask FlushInboundWriter (CancellationToken cancellationToken)
         {
@@ -306,7 +302,7 @@ namespace YtFlow.Tunnel.Adapter.Local
                 catch (ObjectDisposedException) { }
                 try
                 {
-                    await outboundChan.Writer.WaitToWriteAsync();
+                    await outboundChan.Writer.WaitToWriteAsync().ConfigureAwait(false);
                 }
                 catch (Exception)
                 {

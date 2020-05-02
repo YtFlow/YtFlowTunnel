@@ -9,6 +9,7 @@ namespace YtFlow.Tunnel
 {
     sealed class DebugVpnPlugin : IVpnPlugIn
     {
+        private DebugVpnContext context = new DebugVpnContext();
         public VpnPluginState State = VpnPluginState.Disconnected;
         public void Connect (VpnChannel channel)
         {
@@ -23,8 +24,6 @@ namespace YtFlow.Tunnel
                 var transport = new DatagramSocket();
                 channel.AssociateTransport(transport, null);
 
-                DebugVpnContext context = VpnTask.GetContext();
-                channel.PlugInContext = context;
                 DebugLogger.Log("Initializing context");
 #if !YT_MOCK
                 var configPath = AdapterConfig.GetDefaultConfigFilePath();
@@ -146,7 +145,7 @@ namespace YtFlow.Tunnel
                 DebugLogger.Log("Stopping channel");
                 channel.Stop();
                 DebugLogger.Log("Stopping context");
-                VpnTask.GetContext()?.Stop();
+                context.Stop();
                 DebugLogger.Log("Context stopped");
             }
             catch (Exception ex)
@@ -172,8 +171,7 @@ namespace YtFlow.Tunnel
             try
             {
                 uint packetCount = packets.Size;
-                var context = channel.PlugInContext as DebugVpnContext;
-                var tun = context?.tun;
+                var tun = context.tun;
                 if (tun == null)
                 {
                     return;
@@ -199,11 +197,16 @@ namespace YtFlow.Tunnel
         {
             try
             {
-                var context = (DebugVpnContext)channel.PlugInContext;
-                var udpClient = context?.u;
-                var reader = context?.outPackets?.Reader;
-                var waitResult = reader?.WaitToReadAsync().AsTask().Result;
-                if (waitResult != true)
+                var udpClient = context.u;
+                var reader = context.outPackets?.Reader;
+                if (reader == null || udpClient == null)
+                {
+                    return;
+                }
+                _ = udpClient.SendAsync(DUMMY_DATA, DUMMY_DATA.Length, context.pluginEndpoint);
+                // Intentionally block wait
+                var waitResult = reader.WaitToReadAsync().AsTask().Result;
+                if (!waitResult)
                 {
                     return;
                 }
@@ -215,7 +218,6 @@ namespace YtFlow.Tunnel
                     encapBuf.Length = (uint)bytes.Length;
                     decapsulatedPackets.Append(encapBuffer);
                 }
-                _ = udpClient.SendAsync(DUMMY_DATA, DUMMY_DATA.Length, context.pluginEndpoint);
             }
             catch (Exception ex)
             {

@@ -84,7 +84,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
             this.cryptor = cryptor;
         }
 
-        public async ValueTask Init (ChannelReader<byte[]> outboundChan, ILocalAdapter localAdapter)
+        public async ValueTask Init (ChannelReader<byte[]> outboundChan, ILocalAdapter localAdapter, CancellationToken cancellationToken = default)
         {
             var destination = localAdapter.Destination;
             IAsyncAction connectTask;
@@ -103,8 +103,8 @@ namespace YtFlow.Tunnel.Adapter.Remote
                     udpClient = new DatagramSocket();
                     // MessageReceived must be subscribed at this point
                     udpClient.MessageReceived += UdpClient_MessageReceived;
-                    await udpClient.BindServiceNameAsync(string.Empty, dev).AsTask().ConfigureAwait(false);
-                    udpOutputStream = await udpClient.GetOutputStreamAsync(new HostName(server), port.ToString());
+                    await udpClient.BindServiceNameAsync(string.Empty, dev).AsTask(cancellationToken).ConfigureAwait(false);
+                    udpOutputStream = await udpClient.GetOutputStreamAsync(new HostName(server), port.ToString()).AsTask(cancellationToken).ConfigureAwait(false);
                     return;
                 default:
                     throw new NotImplementedException("Unknown transport protocol");
@@ -136,7 +136,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
 
             try
             {
-                await connectTask.AsTask().ConfigureAwait(false);
+                await connectTask.AsTask(cancellationToken).ConfigureAwait(false);
             }
             catch (Exception)
             {
@@ -147,9 +147,8 @@ namespace YtFlow.Tunnel.Adapter.Remote
             try
             {
                 // Recv iv first, then GetRecvBufSizeHint will not bother with iv stuff
-                receiveIvTask = ReceiveIv(requestPayload);
-                // TODO: necessary to wait until the first segment being sent?
-                await client.OutputStream.WriteAsync(encryptedFirstSeg.AsBuffer(0, (int)encryptedFirstSegLen)).AsTask().ConfigureAwait(false);
+                receiveIvTask = ReceiveIv(requestPayload, cancellationToken);
+                _ = client.OutputStream.WriteAsync(encryptedFirstSeg.AsBuffer(0, (int)encryptedFirstSegLen)).AsTask(cancellationToken);
             }
             finally
             {
@@ -157,7 +156,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
             }
         }
 
-        private async Task ReceiveIv (byte[] buf)
+        private async Task ReceiveIv (byte[] buf, CancellationToken cancellationToken)
         {
             try
             {
@@ -165,7 +164,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
                 while (ivReceived < ivLen)
                 {
                     var readLen = ivLen - ivReceived;
-                    var chunk = await tcpInputStream.ReadAsync(buf.AsBuffer((int)ivReceived, (int)readLen), readLen, InputStreamOptions.Partial).AsTask().ConfigureAwait(false);
+                    var chunk = await tcpInputStream.ReadAsync(buf.AsBuffer((int)ivReceived, (int)readLen), readLen, InputStreamOptions.Partial).AsTask(cancellationToken).ConfigureAwait(false);
                     if (chunk.Length == 0)
                     {
                         throw noEnoughIvException;
@@ -230,7 +229,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
                 }
             }
             await stream.FlushAsync().AsTask(cancellationToken).ConfigureAwait(false);
-            client.Dispose();
+            // client.Dispose();
         }
 
         private void UdpClient_MessageReceived (DatagramSocket sender, DatagramSocketMessageReceivedEventArgs args)
