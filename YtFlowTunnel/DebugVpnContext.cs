@@ -1,11 +1,7 @@
 ﻿using System;
 using System.Net;
 using System.Net.Sockets;
-using System.Runtime.InteropServices.WindowsRuntime;
-using System.Threading;
 using System.Threading.Channels;
-using System.Threading.Tasks;
-using Windows.Networking;
 using Windows.Networking.Sockets;
 
 namespace YtFlow.Tunnel
@@ -25,6 +21,7 @@ namespace YtFlow.Tunnel
             tun.PacketPoped += Tun_PacketPoped;
 #endif
         }
+
         public int Init (int pluginPort)
         {
             u = new UdpClient();
@@ -69,14 +66,15 @@ namespace YtFlow.Tunnel
         }
 
         internal Channel<byte[]> outPackets;
+        private static byte[] DUMMY_DATA = new byte[] { 0 };
         private void Tun_PacketPoped (object sender, byte[] e)
         {
-            // await packetPopLock.WaitAsync().ConfigureAwait(false);
             try
             {
                 // await s?.OutputStream.WriteAsync(e.AsBuffer());
                 // await (u?.SendAsync(e, e.Length, pluginEndpoint) ?? Task.CompletedTask).ConfigureAwait(false);
                 _ = outPackets.Writer.TryWrite(e);
+                _ = u.SendAsync(DUMMY_DATA, DUMMY_DATA.Length, pluginEndpoint);
             }
             catch (Exception ex)
             {

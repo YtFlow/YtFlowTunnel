@@ -1,5 +1,7 @@
 ﻿using System;
 using System.Runtime.InteropServices.WindowsRuntime;
+using System.Threading;
+using System.Threading.Tasks;
 using Windows.Networking;
 using Windows.Networking.Sockets;
 using Windows.Networking.Vpn;
@@ -192,24 +194,16 @@ namespace YtFlow.Tunnel
             }
         }
 
-        private static byte[] DUMMY_DATA = new byte[] { 0 };
         public void Decapsulate (VpnChannel channel, VpnPacketBuffer encapPacketBuffer, VpnPacketBufferList decapsulatedPackets, VpnPacketBufferList controlPacketsToSend)
         {
             try
             {
-                var udpClient = context.u;
                 var reader = context.outPackets?.Reader;
-                if (reader == null || udpClient == null)
+                if (reader == null)
                 {
                     return;
                 }
-                _ = udpClient.SendAsync(DUMMY_DATA, DUMMY_DATA.Length, context.pluginEndpoint);
-                // Intentionally block wait
-                var waitResult = reader.WaitToReadAsync().AsTask().Result;
-                if (!waitResult)
-                {
-                    return;
-                }
+
                 while (reader.TryRead(out var bytes))
                 {
                     var encapBuffer = channel.GetVpnReceivePacketBuffer();
