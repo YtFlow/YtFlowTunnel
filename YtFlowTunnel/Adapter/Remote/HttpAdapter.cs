@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
@@ -19,6 +20,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
         private static readonly byte[] HEADER1 = Encoding.UTF8.GetBytes("CONNECT ");
         private static readonly byte[] HEADER2 = Encoding.UTF8.GetBytes(" HTTP/1.1\r\n\r\n");
         private static readonly NotSupportedException UdpNotSupportedException = new NotSupportedException("UDP destination is not supported");
+        private static readonly ArrayPool<byte> sendArrayPool = ArrayPool<byte>.Create();
         private readonly string server;
         private readonly string port;
         private const int HEAD_BUFFER_LEN = 100;
@@ -33,6 +35,17 @@ namespace YtFlow.Tunnel.Adapter.Remote
             this.port = port;
         }
 
+        private static int CountDigit (ushort port)
+        {
+            int ret = 0;
+            while (port != 0)
+            {
+                ret++;
+                port /= 10;
+            }
+            return ret;
+        }
+
         public async ValueTask Init (ChannelReader<byte[]> outboundChan, ILocalAdapter localAdapter, CancellationToken cancellationToken = default)
         {
             if (localAdapter.Destination.TransportProtocol == TransportProtocol.Udp)
@@ -41,64 +54,80 @@ namespace YtFlow.Tunnel.Adapter.Remote
             }
             var dev = NetworkInformation.GetInternetConnectionProfile().NetworkAdapter;
             var connectTask = socket.ConnectAsync(new HostName(server), port.ToString(), SocketProtectionLevel.PlainSocket, dev).AsTask(cancellationToken).ConfigureAwait(false);
-            var destination = localAdapter.Destination;
-            string portStr = destination.Port.ToString();
-            byte[] portBytes = Encoding.UTF8.GetBytes(portStr);
-            byte[] domainBytes = new byte[destination.Host.Size];
-            destination.Host.CopyTo(domainBytes);
-            int headerLen = HEADER1.Length + domainBytes.Length + 1 + portBytes.Length + HEADER2.Length;
-            byte[] firstSeg = new byte[headerLen];
-            HEADER1.CopyTo(firstSeg, 0);
-            domainBytes.CopyTo(firstSeg, HEADER1.Length);
-            firstSeg[HEADER1.Length + domainBytes.Length] = (byte)':';
-            portBytes.CopyTo(firstSeg, HEADER1.Length + domainBytes.Length + 1);
-            HEADER2.CopyTo(firstSeg, headerLen - HEADER2.Length);
 
-            // Connect and perform handshake
-            await connectTask;
-            inputStream = socket.InputStream;
-            outputStream = socket.OutputStream;
-            await outputStream.WriteAsync(firstSeg.AsBuffer(0, headerLen)).AsTask(cancellationToken).ConfigureAwait(false);
-            byte[] responseBuf = new byte[HEAD_BUFFER_LEN];
-            var resBuf = await inputStream.ReadAsync(responseBuf.AsBuffer(), HEAD_BUFFER_LEN, InputStreamOptions.Partial).AsTask(cancellationToken).ConfigureAwait(false);
-            var responseLen = resBuf.Length;
-            if (responseLen < 14)
+            var destination = localAdapter.Destination;
+            var dstPort = destination.Port;
+            var dstPortStrSize = CountDigit(dstPort);
+            var dstHostStrSize = destination.Host.Size;
+            int headerLen = HEADER1.Length + dstHostStrSize + 1 + dstPortStrSize + HEADER2.Length;
+            var firstSeg = sendArrayPool.Rent(headerLen);
+            try
             {
-                throw new InvalidOperationException("Remote response too short");
-            }
-            if ((responseBuf[9] == (byte)'2') && (responseBuf[10] == (byte)'0') && (responseBuf[11] == (byte)'0'))
-            {
-                // 200 objk
-            }
-            else
-            {
-                var code = 100 * (responseBuf[9] - '0') + 10 * (responseBuf[10] - '0') + responseBuf[11] - '0';
-                throw new InvalidOperationException("Remote status code: " + code.ToString());
-            }
-            bool foundHeader = false;
-            int headerStart;
-            for (headerStart = 12; headerStart < responseLen - 3; headerStart++)
-            {
-                if (responseBuf[headerStart] == '\r')
+                HEADER1.CopyTo(firstSeg, 0);
+                destination.Host.CopyTo(firstSeg.AsSpan(HEADER1.Length));
+                firstSeg[HEADER1.Length + dstHostStrSize] = (byte)':';
+                while (dstPortStrSize-- > 0)
                 {
-                    if (responseBuf[headerStart + 1] == '\n')
+                    firstSeg[HEADER1.Length + dstHostStrSize + 1 + dstPortStrSize] = (byte)(dstPort % 10 + '0');
+                    dstPort /= 10;
+                }
+                HEADER2.CopyTo(firstSeg, headerLen - HEADER2.Length);
+
+                // Connect and perform handshake
+                await connectTask;
+                inputStream = socket.InputStream;
+                outputStream = socket.OutputStream;
+                await outputStream.WriteAsync(firstSeg.AsBuffer(0, headerLen)).AsTask(cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                sendArrayPool.Return(firstSeg);
+            }
+            var responseBuf = sendArrayPool.Rent(HEAD_BUFFER_LEN);
+            try
+            {
+                var resBuf = await inputStream.ReadAsync(responseBuf.AsBuffer(), HEAD_BUFFER_LEN, InputStreamOptions.Partial).AsTask(cancellationToken).ConfigureAwait(false);
+                uint responseLen = resBuf.Length;
+                if (responseLen < 14)
+                {
+                    throw new InvalidOperationException("Remote response too short");
+                }
+                if ((responseBuf[9] == (byte)'2') && (responseBuf[10] == (byte)'0') && (responseBuf[11] == (byte)'0'))
+                {
+                    // 200 objk
+                }
+                else
+                {
+                    var code = 100 * (responseBuf[9] - '0') + 10 * (responseBuf[10] - '0') + responseBuf[11] - '0';
+                    throw new InvalidOperationException("Remote status code: " + code.ToString());
+                }
+                bool foundHeader = false;
+                for (int headerStart = 12; headerStart < responseLen - 3; headerStart++)
+                {
+                    if (responseBuf[headerStart] == '\r')
                     {
-                        if (responseBuf[headerStart + 2] == '\r')
+                        if (responseBuf[headerStart + 1] == '\n')
                         {
-                            if (responseBuf[headerStart + 3] == '\n')
+                            if (responseBuf[headerStart + 2] == '\r')
                             {
-                                foundHeader = true;
-                                break;
+                                if (responseBuf[headerStart + 3] == '\n')
+                                {
+                                    foundHeader = true;
+                                    break;
+                                }
                             }
                         }
                     }
                 }
+                if (!foundHeader)
+                {
+                    throw new InvalidOperationException("Unrecognized remote header: " + Encoding.UTF8.GetString(responseBuf, 0, (int)responseLen));
+                }
             }
-            if (!foundHeader)
+            finally
             {
-                throw new InvalidOperationException("Unrecognized remote header: " + Encoding.UTF8.GetString(responseBuf, 0, (int)responseLen));
+                sendArrayPool.Return(responseBuf);
             }
-            headerStart += 4;
             // Initial data?
         }
 
