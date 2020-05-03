@@ -216,7 +216,11 @@ namespace YtFlow.Tunnel.Adapter.Local
                         await socket.initTask.ConfigureAwait(false);
                         socket.remoteAdapter?.SendPacketToRemote(payload, destination);
                     }
-                    catch (NotSupportedException) { }
+                    catch (Exception ex)
+                    {
+                        DebugLogger.Log("Error sending UDP payload: " + ex.ToString());
+                        socket?.CheckShutdown();
+                    }
                 }
             }
         }

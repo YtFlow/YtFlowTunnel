@@ -100,15 +100,16 @@ namespace YtFlow.Tunnel
                 // DNS server
                 inclusionRoutes.Add(new VpnRoute(new HostName("1.1.1.1"), 32));
                 // main CIDR
-                inclusionRoutes.Add(new VpnRoute(new HostName("172.17.0.0"), 16));
+                inclusionRoutes.Add(new VpnRoute(new HostName("11.17.0.0"), 16));
+                // proxy
+                inclusionRoutes.Add(new VpnRoute(new HostName("172.17.255.0"), 24));
 
                 var assignment = new VpnDomainNameAssignment();
-                var dnsServers = new[]
-                {
-                    // DNS servers
-                    new HostName("1.1.1.1"),
-                };
-                assignment.DomainNameList.Add(new VpnDomainNameInfo(".", VpnDomainNameType.Suffix, dnsServers, new HostName[] { }));
+                assignment.DomainNameList.Add(new VpnDomainNameInfo(
+                    ".",
+                    VpnDomainNameType.Suffix,
+                    new[] { new HostName("1.1.1.1") },
+                    Array.Empty<HostName>()));
 
                 var now = DateTime.Now;
                 DebugLogger.Log("Starting transport");

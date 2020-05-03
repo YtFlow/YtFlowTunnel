@@ -35,7 +35,7 @@ namespace YtFlow.Tunnel.DNS
             }
             else
             {
-                uint ip = (uint)((172 << 24) | (17 << 16) | lookupTable.Count);
+                uint ip = (uint)((11 << 24) | (17 << 16) | lookupTable.Count);
                 lookupTable[ip] = n;
                 rlookupTable[n] = ip;
                 DebugLogger.Log("DNS request done: " + n);

@@ -241,7 +241,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
         {
             var outDataBuffer = new byte[sendBufferLen + 66];
             var tcs = new TaskCompletionSource<object>();
-            async void packetHandler (DatagramSocket sender, DatagramSocketMessageReceivedEventArgs e)
+            void packetHandler (DatagramSocket sender, DatagramSocketMessageReceivedEventArgs e)
             {
                 if (cancellationToken.IsCancellationRequested)
                 {
@@ -327,6 +327,10 @@ namespace YtFlow.Tunnel.Adapter.Remote
             // cryptor?.Dispose();
             // cryptor = null;
             // outboundChan = null;
+            if (udpClient != null)
+            {
+                udpClient.MessageReceived -= UdpClient_MessageReceived;
+            }
             try
             {
                 tcpInputStream?.Dispose();

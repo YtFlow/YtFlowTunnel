@@ -124,6 +124,10 @@ namespace YtFlow.Tunnel.Adapter.Remote
 
         public void CheckShutdown ()
         {
+            if (datagramSocket != null)
+            {
+                datagramSocket.MessageReceived -= DatagramSocket_MessageReceived;
+            }
             try
             {
                 datagramSocket?.Dispose();
