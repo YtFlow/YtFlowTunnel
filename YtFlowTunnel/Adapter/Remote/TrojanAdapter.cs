@@ -149,8 +149,6 @@ namespace YtFlow.Tunnel.Adapter.Remote
                 await Task.WhenAll(pendingTasks).ConfigureAwait(false);
             }
             await outputStream.FlushAsync().AsTask(cancellationToken).ConfigureAwait(false);
-            outputStream.Dispose();
-            socket.Dispose();
         }
 
         public async Task StartRecvPacket (ILocalAdapter localAdapter, CancellationToken cancellationToken = default)
@@ -229,25 +227,21 @@ namespace YtFlow.Tunnel.Adapter.Remote
 
         public void CheckShutdown ()
         {
-            // outboundChan = null;
             try
             {
                 inputStream?.Dispose();
             }
             catch (ObjectDisposedException) { }
-            // inputStream = null;
             try
             {
                 outputStream?.Dispose();
             }
             catch (ObjectDisposedException) { }
-            // outputStream = null;
             try
             {
-                socket?.Dispose();
+                socket.Dispose();
             }
             catch (ObjectDisposedException) { }
-            // socket = null;
         }
     }
 }

@@ -21,7 +21,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
         private readonly byte[] sizeBuf = new byte[READ_SIZE_SIZE];
         private int sizeToRead = 0;
 
-        public ShadowsocksAeadAdapter (string server, int port, ICryptor cryptor) : base(server, port, cryptor)
+        public ShadowsocksAeadAdapter (string server, string serviceName, ICryptor cryptor) : base(server, serviceName, cryptor)
         {
 
         }

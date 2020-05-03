@@ -11,9 +11,11 @@ namespace YtFlow.Tunnel.Adapter.Factory
         internal static CryptorFactory GlobalCryptorFactory { get; set; }
         private CryptorFactory CryptorFactory { get; set; }
         private readonly bool isAead = false;
+        private readonly string serviceName;
         public ShadowsocksFactory (ShadowsocksConfig config)
         {
             this.config = config;
+            serviceName = config.ServerPort.ToString();
             var lowerMethod = config.Method.ToLower();
             if (lowerMethod.EndsWith("gcm") || lowerMethod.EndsWith("poly1305"))
             {
@@ -26,11 +28,11 @@ namespace YtFlow.Tunnel.Adapter.Factory
         {
             if (isAead)
             {
-                return new ShadowsocksAeadAdapter(config.ServerHost, config.ServerPort, CryptorFactory.CreateCryptor());
+                return new ShadowsocksAeadAdapter(config.ServerHost, serviceName, CryptorFactory.CreateCryptor());
             }
             else
             {
-                return new ShadowsocksAdapter(config.ServerHost, config.ServerPort, CryptorFactory.CreateCryptor());
+                return new ShadowsocksAdapter(config.ServerHost, serviceName, CryptorFactory.CreateCryptor());
             }
         }
     }

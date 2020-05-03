@@ -23,7 +23,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
         private readonly SemaphoreSlim udpSendLock = new SemaphoreSlim(1, 1);
         protected virtual int sendBufferLen => 4096;
         protected readonly string server;
-        protected readonly int port;
+        protected readonly string serviceName;
         protected StreamSocket client;
         protected DatagramSocket udpClient;
         protected Action<DatagramSocket, DatagramSocketMessageReceivedEventArgs> udpReceivedHandler = (_s, _e) => { };
@@ -77,10 +77,10 @@ namespace YtFlow.Tunnel.Adapter.Remote
             }
         }
 
-        public ShadowsocksAdapter (string server, int port, ICryptor cryptor)
+        public ShadowsocksAdapter (string server, string serviceName, ICryptor cryptor)
         {
             this.server = server;
-            this.port = port;
+            this.serviceName = serviceName;
             this.cryptor = cryptor;
         }
 
@@ -94,7 +94,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
                 case TransportProtocol.Tcp:
                     client = new StreamSocket();
                     client.Control.NoDelay = true;
-                    connectTask = client.ConnectAsync(new HostName(server), port.ToString(), SocketProtectionLevel.PlainSocket, dev);
+                    connectTask = client.ConnectAsync(new HostName(server), serviceName, SocketProtectionLevel.PlainSocket, dev);
                     tcpInputStream = client.InputStream;
                     break;
                 case TransportProtocol.Udp:
@@ -104,7 +104,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
                     // MessageReceived must be subscribed at this point
                     udpClient.MessageReceived += UdpClient_MessageReceived;
                     await udpClient.BindServiceNameAsync(string.Empty, dev).AsTask(cancellationToken).ConfigureAwait(false);
-                    udpOutputStream = await udpClient.GetOutputStreamAsync(new HostName(server), port.ToString()).AsTask(cancellationToken).ConfigureAwait(false);
+                    udpOutputStream = await udpClient.GetOutputStreamAsync(new HostName(server), serviceName).AsTask(cancellationToken).ConfigureAwait(false);
                     return;
                 default:
                     throw new NotImplementedException("Unknown transport protocol");

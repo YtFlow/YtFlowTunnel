@@ -1,9 +1,14 @@
 ﻿using System;
-using System.Net.Sockets;
+using System.Collections.Generic;
+using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
+using Windows.Networking;
+using Windows.Networking.Connectivity;
+using Windows.Networking.Sockets;
+using Windows.Storage.Streams;
 using YtFlow.Tunnel.Adapter.Destination;
 using YtFlow.Tunnel.Adapter.Local;
 
@@ -15,16 +20,14 @@ namespace YtFlow.Tunnel.Adapter.Remote
         private static readonly byte[] HEADER2 = Encoding.UTF8.GetBytes(" HTTP/1.1\r\n\r\n");
         private static readonly NotSupportedException UdpNotSupportedException = new NotSupportedException("UDP destination is not supported");
         private readonly string server;
-        private readonly int port;
+        private readonly string port;
         private const int HEAD_BUFFER_LEN = 100;
-        private readonly TcpClient client = new TcpClient(AddressFamily.InterNetwork)
-        {
-            NoDelay = true
-        };
-        private NetworkStream networkStream;
+        private readonly StreamSocket socket = new StreamSocket();
+        private IInputStream inputStream;
+        private IOutputStream outputStream;
         public bool RemoteDisconnected { get; set; } = false;
 
-        public HttpAdapter (string server, int port)
+        public HttpAdapter (string server, string port)
         {
             this.server = server;
             this.port = port;
@@ -36,7 +39,8 @@ namespace YtFlow.Tunnel.Adapter.Remote
             {
                 throw UdpNotSupportedException;
             }
-            var connectTask = client.ConnectAsync(server, port).ConfigureAwait(false);
+            var dev = NetworkInformation.GetInternetConnectionProfile().NetworkAdapter;
+            var connectTask = socket.ConnectAsync(new HostName(server), port.ToString(), SocketProtectionLevel.PlainSocket, dev).AsTask(cancellationToken).ConfigureAwait(false);
             var destination = localAdapter.Destination;
             string portStr = destination.Port.ToString();
             byte[] portBytes = Encoding.UTF8.GetBytes(portStr);
@@ -52,10 +56,12 @@ namespace YtFlow.Tunnel.Adapter.Remote
 
             // Connect and perform handshake
             await connectTask;
-            networkStream = client.GetStream();
-            await networkStream.WriteAsync(firstSeg, 0, headerLen, cancellationToken).ConfigureAwait(false);
+            inputStream = socket.InputStream;
+            outputStream = socket.OutputStream;
+            await outputStream.WriteAsync(firstSeg.AsBuffer(0, headerLen)).AsTask(cancellationToken).ConfigureAwait(false);
             byte[] responseBuf = new byte[HEAD_BUFFER_LEN];
-            var responseLen = await networkStream.ReadAsync(responseBuf, 0, HEAD_BUFFER_LEN, cancellationToken);
+            var resBuf = await inputStream.ReadAsync(responseBuf.AsBuffer(), HEAD_BUFFER_LEN, InputStreamOptions.Partial).AsTask(cancellationToken).ConfigureAwait(false);
+            var responseLen = resBuf.Length;
             if (responseLen < 14)
             {
                 throw new InvalidOperationException("Remote response too short");
@@ -90,50 +96,59 @@ namespace YtFlow.Tunnel.Adapter.Remote
             }
             if (!foundHeader)
             {
-                throw new InvalidOperationException("Unrecognized remote header: " + Encoding.UTF8.GetString(responseBuf, 0, responseLen));
+                throw new InvalidOperationException("Unrecognized remote header: " + Encoding.UTF8.GetString(responseBuf, 0, (int)responseLen));
             }
             headerStart += 4;
             // Initial data?
-            client.NoDelay = false;
         }
 
         public async Task StartSend (ChannelReader<byte[]> outboundChan, CancellationToken cancellationToken = default)
         {
             while (await outboundChan.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                if (outboundChan.TryRead(out var data))
+                var packetsToSend = new List<byte[]>();
+                while (outboundChan.TryRead(out var segment))
                 {
-                    // TODO: batch write
-                    await networkStream.WriteAsync(data, 0, data.Length, cancellationToken).ConfigureAwait(false);
-                    // await networkStream.FlushAsync();
+                    packetsToSend.Add(segment);
                 }
+                var pendingTasks = new Task[packetsToSend.Count];
+                for (var index = 0; index < packetsToSend.Count; ++index)
+                {
+                    var segment = packetsToSend[index];
+                    pendingTasks[index] = outputStream.WriteAsync(segment.AsBuffer()).AsTask(cancellationToken);
+                }
+                await Task.WhenAll(pendingTasks).ConfigureAwait(false);
             }
-            await networkStream.FlushAsync(cancellationToken).ConfigureAwait(false);
-            client.Client.Shutdown(SocketShutdown.Send);
+            await outputStream.FlushAsync().AsTask(cancellationToken).ConfigureAwait(false);
         }
 
         public ValueTask<int> GetRecvBufSizeHint (int preferredSize, CancellationToken cancellationToken = default) => new ValueTask<int>(preferredSize);
 
         public async ValueTask<int> StartRecv (ArraySegment<byte> outBuf, CancellationToken cancellationToken = default)
         {
-            var len = await networkStream.ReadAsync(outBuf.Array, outBuf.Offset, outBuf.Count, cancellationToken).ConfigureAwait(false);
-            if (len == 0)
+            var recvBuf = await inputStream.ReadAsync(outBuf.Array.AsBuffer(outBuf.Offset, outBuf.Count), (uint)outBuf.Count, InputStreamOptions.Partial).AsTask(cancellationToken).ConfigureAwait(false);
+            if (recvBuf.Length == 0)
             {
                 return 0;
             }
-            return len;
+            return (int)recvBuf.Length;
         }
 
         public void CheckShutdown ()
         {
             try
             {
-                networkStream?.Dispose();
+                inputStream?.Dispose();
             }
             catch (ObjectDisposedException) { }
             try
             {
-                client?.Dispose();
+                outputStream?.Dispose();
+            }
+            catch (ObjectDisposedException) { }
+            try
+            {
+                socket.Dispose();
             }
             catch (ObjectDisposedException) { }
         }
