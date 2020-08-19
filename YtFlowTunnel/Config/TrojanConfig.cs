@@ -7,26 +7,10 @@ namespace YtFlow.Tunnel.Config
     [DataContract]
     public sealed class TrojanConfig : IAdapterConfig
     {
-        private static DataContractJsonSerializer serializer = new DataContractJsonSerializer(typeof(TrojanConfig));
-        internal static TrojanConfig GetConfigFromFilePath (string filePath)
-        {
-            using (var stream = new FileStream(filePath, FileMode.Open))
-            {
-                var config = serializer.ReadObject(stream) as TrojanConfig;
-                if (config != null)
-                {
-                    config.Path = filePath;
-                }
-                return config;
-            }
-        }
+        internal static readonly DataContractJsonSerializer serializer = new DataContractJsonSerializer(typeof(TrojanConfig));
         public void SaveToFile (string filePath)
         {
-            using (var stream = new FileStream(filePath, FileMode.Truncate))
-            {
-                serializer.WriteObject(stream, this);
-            }
-            Path = filePath;
+            AdapterConfig.SaveToFile(this, filePath, serializer);
         }
 
         [IgnoreDataMember]

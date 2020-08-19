@@ -7,26 +7,10 @@ namespace YtFlow.Tunnel.Config
     [DataContract]
     public sealed class HttpConfig : IAdapterConfig
     {
-        private static DataContractJsonSerializer serializer = new DataContractJsonSerializer(typeof(HttpConfig));
-        internal static HttpConfig GetConfigFromFilePath (string filePath)
-        {
-            using (var stream = new FileStream(filePath, FileMode.Open))
-            {
-                var config = serializer.ReadObject(stream) as HttpConfig;
-                if (config != null)
-                {
-                    config.Path = filePath;
-                }
-                return config;
-            }
-        }
+        internal static readonly DataContractJsonSerializer serializer = new DataContractJsonSerializer(typeof(HttpConfig));
         public void SaveToFile (string filePath)
         {
-            using (var stream = new FileStream(filePath, FileMode.Truncate))
-            {
-                serializer.WriteObject(stream, this);
-            }
-            Path = filePath;
+            AdapterConfig.SaveToFile(this, filePath, serializer);
         }
 
         [IgnoreDataMember]

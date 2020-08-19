@@ -24,16 +24,30 @@ namespace YtFlow.Tunnel.Config
                     baseConfig.Path = filePath;
                 }
             }
+            DataContractJsonSerializer subSerializer;
             switch (baseConfig.AdapterType)
             {
                 case "shadowsocks":
-                    return ShadowsocksConfig.GetConfigFromFilePath(filePath);
+                    subSerializer = ShadowsocksConfig.serializer;
+                    break;
                 case "http":
-                    return HttpConfig.GetConfigFromFilePath(filePath);
+                    subSerializer = HttpConfig.serializer;
+                    break;
                 case "trojan":
-                    return TrojanConfig.GetConfigFromFilePath(filePath);
+                    subSerializer = TrojanConfig.serializer;
+                    break;
                 default:
                     throw adapterTypeNotFoundException;
+            }
+
+            using (var stream = new FileStream(filePath, FileMode.Open))
+            {
+                var config = subSerializer.ReadObject(stream) as IAdapterConfig;
+                if (config != null)
+                {
+                    config.Path = filePath;
+                }
+                return config;
             }
         }
         internal static IRemoteAdapterFactory GetAdapterFactoryFromDefaultFile ()
@@ -63,6 +77,15 @@ namespace YtFlow.Tunnel.Config
         public static void ClearDefaultConfigFilePath ()
         {
             ApplicationData.Current.LocalSettings.Values.Remove(DEFAULT_CONFIG_PATH_KEY);
+        }
+
+        static internal void SaveToFile<T> (T obj, string filePath, DataContractJsonSerializer serializer) where T : IAdapterConfig
+        {
+            using (var stream = new FileStream(filePath, FileMode.Truncate))
+            {
+                serializer.WriteObject(stream, obj);
+            }
+            obj.Path = filePath;
         }
 
         public void SaveToFile (string filePath)
