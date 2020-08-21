@@ -1,7 +1,10 @@
 ﻿using System;
 using System.IO;
+using System.Runtime.InteropServices.WindowsRuntime;
 using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
+using System.Threading.Tasks;
+using Windows.Foundation;
 using Windows.Storage;
 using YtFlow.Tunnel.Adapter.Factory;
 
@@ -79,16 +82,23 @@ namespace YtFlow.Tunnel.Config
             ApplicationData.Current.LocalSettings.Values.Remove(DEFAULT_CONFIG_PATH_KEY);
         }
 
-        static internal void SaveToFile<T> (T obj, string filePath, DataContractJsonSerializer serializer) where T : IAdapterConfig
+        static private async Task SaveToFileAsyncImpl<T> (T obj, string filePath, DataContractJsonSerializer serializer) where T : IAdapterConfig
         {
-            using (var stream = new FileStream(filePath, FileMode.Truncate))
+            using (var stream = new MemoryStream())
             {
                 serializer.WriteObject(stream, obj);
+                stream.Seek(0, SeekOrigin.Begin);
+                var file = await StorageFile.GetFileFromPathAsync(filePath);
+                await FileIO.WriteBufferAsync(file, stream.GetWindowsRuntimeBuffer(0, (int)stream.Length));
             }
-            obj.Path = filePath;
         }
 
-        public void SaveToFile (string filePath)
+        static internal IAsyncAction SaveToFileAsync<T> (T obj, string filePath, DataContractJsonSerializer serializer) where T : IAdapterConfig
+        {
+            return SaveToFileAsyncImpl(obj, filePath, serializer).AsAsyncAction();
+        }
+
+        public IAsyncAction SaveToFileAsync (string filePath)
         {
             throw new NotImplementedException();
         }

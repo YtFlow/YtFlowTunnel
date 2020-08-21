@@ -1,6 +1,6 @@
-﻿using System.IO;
-using System.Runtime.Serialization;
+﻿using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
+using Windows.Foundation;
 
 namespace YtFlow.Tunnel.Config
 {
@@ -8,9 +8,9 @@ namespace YtFlow.Tunnel.Config
     public sealed class ShadowsocksConfig : IAdapterConfig
     {
         internal static readonly DataContractJsonSerializer serializer = new DataContractJsonSerializer(typeof(ShadowsocksConfig));
-        public void SaveToFile (string filePath)
+        public IAsyncAction SaveToFileAsync (string filePath)
         {
-            AdapterConfig.SaveToFile(this, filePath, serializer);
+            return AdapterConfig.SaveToFileAsync(this, filePath, serializer);
         }
 
         [IgnoreDataMember]
