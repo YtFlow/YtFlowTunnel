@@ -1,8 +1,8 @@
-﻿using System;
+﻿using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+using System;
 using System.IO;
-using System.Runtime.InteropServices.WindowsRuntime;
 using System.Runtime.Serialization;
-using System.Runtime.Serialization.Json;
 using System.Threading.Tasks;
 using Windows.Foundation;
 using Windows.Storage;
@@ -14,48 +14,41 @@ namespace YtFlow.Tunnel.Config
     public sealed class AdapterConfig : IAdapterConfig
     {
         private const string DEFAULT_CONFIG_PATH_KEY = "ytflow.tunnel.config.default_path";
-        private static DataContractJsonSerializer serializer = new DataContractJsonSerializer(typeof(AdapterConfig));
-        private static Exception adapterTypeNotFoundException = new ArgumentOutOfRangeException("AdapterType", "AdapterType not recognized.");
-        public static IAdapterConfig GetConfigFromFilePath (string filePath)
+        // private static DataContractJsonSerializer serializer = new DataContractJsonSerializer(typeof(AdapterConfig));
+        private static readonly JsonSerializer serializer = JsonSerializer.CreateDefault();
+        private static readonly Exception adapterTypeNotFoundException = new ArgumentOutOfRangeException("AdapterType", "AdapterType not recognized.");
+        public static IAsyncOperation<IAdapterConfig> GetConfigFromFilePath (string filePath)
         {
-            AdapterConfig baseConfig = null;
-            using (var stream = new FileStream(filePath, FileMode.Open))
-            {
-                baseConfig = serializer.ReadObject(stream) as AdapterConfig;
-                if (baseConfig != null)
-                {
-                    baseConfig.Path = filePath;
-                }
-            }
-            DataContractJsonSerializer subSerializer;
-            switch (baseConfig.AdapterType)
+            return GetConfigFromFilePathImpl(filePath).AsAsyncOperation();
+        }
+        internal static async Task<IAdapterConfig> GetConfigFromFilePathImpl (string filePath)
+        {
+            string fileContent = await PathIO.ReadTextAsync(filePath);
+            var json = JObject.Parse(fileContent);
+            var adapterType = json.GetValue(nameof(IAdapterConfig.AdapterType)).Value<string>();
+            var reader = json.CreateReader();
+            IAdapterConfig config;
+            switch (adapterType)
             {
                 case "shadowsocks":
-                    subSerializer = ShadowsocksConfig.serializer;
+                    config = new ShadowsocksConfig();
                     break;
                 case "http":
-                    subSerializer = HttpConfig.serializer;
+                    config = new HttpConfig();
                     break;
                 case "trojan":
-                    subSerializer = TrojanConfig.serializer;
+                    config = new TrojanConfig();
                     break;
                 default:
                     throw adapterTypeNotFoundException;
             }
-
-            using (var stream = new FileStream(filePath, FileMode.Open))
-            {
-                var config = subSerializer.ReadObject(stream) as IAdapterConfig;
-                if (config != null)
-                {
-                    config.Path = filePath;
-                }
-                return config;
-            }
+            serializer.Populate(reader, config);
+            config.Path = filePath;
+            return config;
         }
-        internal static IRemoteAdapterFactory GetAdapterFactoryFromDefaultFile ()
+        internal static async Task<IRemoteAdapterFactory> GetAdapterFactoryFromDefaultFile ()
         {
-            var config = GetConfigFromFilePath(GetDefaultConfigFilePath());
+            var config = await GetConfigFromFilePathImpl(GetDefaultConfigFilePath());
             switch (config)
             {
                 case ShadowsocksConfig ssConfig:
@@ -80,27 +73,6 @@ namespace YtFlow.Tunnel.Config
         public static void ClearDefaultConfigFilePath ()
         {
             ApplicationData.Current.LocalSettings.Values.Remove(DEFAULT_CONFIG_PATH_KEY);
-        }
-
-        static private async Task SaveToFileAsyncImpl<T> (T obj, string filePath, DataContractJsonSerializer serializer) where T : IAdapterConfig
-        {
-            using (var stream = new MemoryStream())
-            {
-                serializer.WriteObject(stream, obj);
-                stream.Seek(0, SeekOrigin.Begin);
-                var file = await StorageFile.GetFileFromPathAsync(filePath);
-                await FileIO.WriteBufferAsync(file, stream.GetWindowsRuntimeBuffer(0, (int)stream.Length));
-            }
-        }
-
-        static internal IAsyncAction SaveToFileAsync<T> (T obj, string filePath, DataContractJsonSerializer serializer) where T : IAdapterConfig
-        {
-            return SaveToFileAsyncImpl(obj, filePath, serializer).AsAsyncAction();
-        }
-
-        public IAsyncAction SaveToFileAsync (string filePath)
-        {
-            throw new NotImplementedException();
         }
 
         [DataMember]

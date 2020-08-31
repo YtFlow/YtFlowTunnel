@@ -83,8 +83,8 @@ namespace YtFlow.Tunnel
             {
                 return;
             }
+            adapterFactory = await AdapterConfig.GetAdapterFactoryFromDefaultFile();
             running = true;
-            adapterFactory = AdapterConfig.GetAdapterFactoryFromDefaultFile();
             taskChannel = Channel.CreateUnbounded<Action>(new UnboundedChannelOptions()
             {
                 SingleReader = true
