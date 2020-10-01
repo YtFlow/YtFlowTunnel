@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Buffers;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Threading;
 using System.Threading.Channels;
@@ -21,6 +22,8 @@ namespace YtFlow.Tunnel.Adapter.Remote
         private readonly static ArrayPool<byte> sendArrayPool = ArrayPool<byte>.Create();
         private readonly static ChannelClosedException noEnoughIvException = new ChannelClosedException("No enough iv received");
         private readonly SemaphoreSlim udpSendLock = new SemaphoreSlim(1, 1);
+        private byte[] recvData = null;
+        private IBuffer recvDataBuffer = null;
         protected virtual int sendBufferLen => 4096;
         protected readonly string server;
         protected readonly string serviceName;
@@ -181,20 +184,44 @@ namespace YtFlow.Tunnel.Adapter.Remote
 
         public virtual ValueTask<int> GetRecvBufSizeHint (int preferredSize, CancellationToken cancellationToken = default) => new ValueTask<int>(preferredSize);
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        unsafe int DecryptBuffer (IBuffer buf, Span<byte> outBuf)
+        {
+            var len = (int)buf.Length;
+            if (len == 0)
+            {
+                return 0;
+            }
+
+            if (buf != recvDataBuffer)
+            {
+                buf.CopyTo(0, recvDataBuffer, 0, buf.Length);
+            }
+            return (int)Decrypt(recvData.AsSpan(0, len), outBuf.Slice(0, len));
+        }
+
         public virtual async ValueTask<int> StartRecv (ArraySegment<byte> outBuf, CancellationToken cancellationToken = default)
         {
             if (!receiveIvTask.IsCompleted)
             {
                 await receiveIvTask.ConfigureAwait(false);
             }
-            var chunk = await tcpInputStream.ReadAsync(outBuf.Array.AsBuffer(outBuf.Offset, outBuf.Count), (uint)outBuf.Count, InputStreamOptions.Partial)
-                .AsTask(cancellationToken).ConfigureAwait(false);
-            var len = (int)chunk.Length;
-            if (len == 0)
+            if (recvData == null)
             {
-                return 0;
+                recvData = sendArrayPool.Rent(outBuf.Count);
+                recvDataBuffer = recvData.AsBuffer();
             }
-            return (int)Decrypt(outBuf.AsSpan(0, len), outBuf.AsSpan(0, len));
+            else if (recvData.Length < outBuf.Count)
+            {
+                ZeroMemory(recvData);
+                Array.Resize(ref recvData, outBuf.Count);
+                recvDataBuffer = recvData.AsBuffer();
+            }
+            // The underlying Mbed TLS does not allow in-place stream decryption with an unpadded chunk.
+            // A buffer is used to hold the received, encrypted data. No more copies are introduced.
+            var chunk = await tcpInputStream.ReadAsync(recvDataBuffer, (uint)recvData.Length, InputStreamOptions.Partial)
+                .AsTask(cancellationToken).ConfigureAwait(false);
+            return DecryptBuffer(chunk, outBuf.AsSpan());
         }
 
         public async Task StartSend (ChannelReader<byte[]> outboundChan, CancellationToken cancellationToken = default)
@@ -322,11 +349,21 @@ namespace YtFlow.Tunnel.Adapter.Remote
             }
         }
 
+        [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.NoOptimization)]
+        public static void ZeroMemory (Span<byte> buffer)
+        {
+            buffer.Clear();
+        }
+
         public void CheckShutdown ()
         {
             // cryptor?.Dispose();
             // cryptor = null;
             // outboundChan = null;
+            if (recvData != null)
+            {
+                ZeroMemory(recvData);
+            }
             if (udpClient != null)
             {
                 udpClient.MessageReceived -= UdpClient_MessageReceived;

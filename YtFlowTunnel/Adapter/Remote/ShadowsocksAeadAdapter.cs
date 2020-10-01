@@ -15,7 +15,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
     internal class ShadowsocksAeadAdapter : ShadowsocksAdapter
     {
         private const int TAG_SIZE = 16;
-        private const int SIZE_MASK = 0x3fff;
+        private const int SIZE_MASK = 0x7fff;
         private const int READ_SIZE_SIZE = TAG_SIZE + 2;
         protected override int sendBufferLen => SIZE_MASK;
         private readonly byte[] sizeBuf = new byte[READ_SIZE_SIZE];
