@@ -195,7 +195,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
 
             if (buf != recvDataBuffer)
             {
-                buf.CopyTo(0, recvDataBuffer, 0, buf.Length);
+                buf.CopyTo(0, recvDataBuffer, 0, (uint)len);
             }
             return (int)Decrypt(recvData.AsSpan(0, len), outBuf.Slice(0, len));
         }
@@ -208,7 +208,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
             }
             if (recvData == null)
             {
-                recvData = sendArrayPool.Rent(outBuf.Count);
+                recvData = new byte[outBuf.Count];
                 recvDataBuffer = recvData.AsBuffer();
             }
             else if (recvData.Length < outBuf.Count)
@@ -219,7 +219,7 @@ namespace YtFlow.Tunnel.Adapter.Remote
             }
             // The underlying Mbed TLS does not allow in-place stream decryption with an unpadded chunk.
             // A buffer is used to hold the received, encrypted data. No more copies are introduced.
-            var chunk = await tcpInputStream.ReadAsync(recvDataBuffer, (uint)recvData.Length, InputStreamOptions.Partial)
+            var chunk = await tcpInputStream.ReadAsync(recvDataBuffer, (uint)outBuf.Count, InputStreamOptions.Partial)
                 .AsTask(cancellationToken).ConfigureAwait(false);
             return DecryptBuffer(chunk, outBuf.AsSpan());
         }
